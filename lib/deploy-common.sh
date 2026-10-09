@@ -110,3 +110,13 @@ branch_position() {
         echo diverged
     fi
 }
+
+# The hooks in githooks/ that the secondary machine's bootstrap installs in
+# both application repositories. The path is relative to each repository, so
+# it is the same on every system.
+SECONDARY_HOOKS_PATH=../githooks
+
+# Succeeds when a repository runs the secondary machine's hooks.
+secondary_hooks_installed() {
+    [ "$(git -C "$1" config --get core.hooksPath)" = "$SECONDARY_HOOKS_PATH" ]
+}

@@ -1,6 +1,7 @@
 #!/bin/bash
-# Checks that this machine is set up to push and deploy: the charity's
-# Cloudflare access, the Resend key and who is told the result.
+# Checks that this machine is set up to push and deploy: on the secondary
+# machine, its git hooks; the charity's Cloudflare access, the Resend key and
+# who is told the result.
 #
 #   ./check-setup
 #
@@ -31,6 +32,17 @@ miss() { printf '   MISSING  %s\n' "$*"; missing=$((missing + 1)); }
 note() { printf '   note     %s\n' "$*"; }
 
 [ -d "$SERVER_DIR/node_modules" ] || die "foodbankserver is not set up yet (bootstrap step 3); its wrangler does the Cloudflare checks."
+
+if [ -f "$PROJECT_DIR/secondary.local" ]; then
+    heading "The secondary machine's git hooks"
+    for repo in foodbankclient foodbankserver; do
+        if secondary_hooks_installed "$PROJECT_DIR/$repo"; then
+            pass "$repo refuses a plain git push, and a commit while a deploy waits"
+        else
+            miss "$repo does not run this machine's git hooks — git -C $repo config core.hooksPath $SECONDARY_HOOKS_PATH"
+        fi
+    done
+fi
 
 heading "The charity's Cloudflare account (needed for UAT)"
 if token=$(read_secret "$CHARITY_TOKEN_KEYCHAIN") && [ -n "$token" ]; then

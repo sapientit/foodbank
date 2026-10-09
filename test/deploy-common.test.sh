@@ -113,6 +113,39 @@ check "position: ahead of GitHub" "ahead" "$(branch_position "$repo" "$ahead" "$
 check "position: behind GitHub" "behind" "$(branch_position "$repo" "$base" "$ahead")"
 check "position: diverged" "diverged" "$(branch_position "$repo" "$other" "$ahead")"
 
+# --- the secondary machine's git hooks ---------------------------------------
+# A stand-in project directory: the real hooks, a stand-in ./deploy whose
+# status the test sets, and one application repository pushing to a local remote.
+proj="$tmp/project"
+mkdir -p "$proj"
+cp -R githooks "$proj/githooks"
+printf '#!/bin/bash\ncat "$(dirname "$0")/status.txt"\n' >"$proj/deploy"
+chmod +x "$proj/deploy"
+echo "No deploy is waiting." >"$proj/status.txt"
+git init -q --bare "$tmp/remote.git"
+git clone -q "$tmp/remote.git" "$proj/app" 2>/dev/null
+git -C "$proj/app" config core.hooksPath "$SECONDARY_HOOKS_PATH"
+app_commit() { git -C "$proj/app" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$1" 2>/dev/null; }
+
+check "hooks: installed as bootstrap installs them" "0" "$(secondary_hooks_installed "$proj/app"; echo $?)"
+check "hooks: not installed in a repository without them" "1" "$(secondary_hooks_installed "$repo"; echo $?)"
+app_commit first
+check "hooks: a commit with no deploy waiting goes through" "0" "$?"
+git -C "$proj/app" push -q origin HEAD 2>/dev/null
+check "hooks: a plain git push is refused" "1" "$?"
+check "hooks: ...and nothing reached the remote" "" "$(git -C "$tmp/remote.git" for-each-ref)"
+FOODBANK_PROJECT_PUSH=1 git -C "$proj/app" push -q origin HEAD 2>/dev/null
+check "hooks: the push command's push goes through" "0" "$?"
+echo "uat: waiting to deploy at Fri 09 Oct 04:17 BST (process 1)" >"$proj/status.txt"
+app_commit second
+check "hooks: a commit while a deploy waits is refused" "1" "$?"
+echo "uat: was waiting, but its process is gone — it will not run. Prepare again." >"$proj/status.txt"
+app_commit third
+check "hooks: a deploy that will not run does not block a commit" "0" "$?"
+mkdir -p "$proj/.deploy/uat.lock"
+app_commit fourth
+check "hooks: a commit while a deploy runs is refused" "1" "$?"
+
 echo
 if [ "$failures" -gt 0 ]; then
     echo "$failures failed"

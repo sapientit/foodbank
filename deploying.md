@@ -57,7 +57,8 @@ and nothing was recorded, so `./deploy` will refuse it. Usually someone pushed f
 `./push` again.
 
 **Never use `git push` for the client or the server on this route**: it skips the checks and records
-nothing.
+nothing. On the secondary machine git refuses it, and refuses a commit while a deploy is waiting;
+see [`secondary.md`](./secondary.md).
 
 ### 2. Prepare, in the evening
 

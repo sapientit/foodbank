@@ -1,0 +1,24 @@
+#!/bin/bash
+# Installed in both application repositories on the secondary machine, by
+# "Mark this as the secondary machine" in bootstrap.md. A deploy that is
+# running, or waiting for the night, checks that both repositories still match
+# what was approved and stands down if either has changed. So no commit until
+# it has run.
+PROJECT_DIR=$(cd "$(dirname "$0")/.." && pwd)
+
+refuse() {
+    printf 'STOPPED: %s\nNothing was committed. Your changes are still here; commit them once the deploy has run.\n' "$1" >&2
+    exit 1
+}
+
+for lock in "$PROJECT_DIR"/.deploy/*.lock; do
+    [ -d "$lock" ] && refuse "a deploy is running now (./deploy status in the project directory)."
+done
+status=$("$PROJECT_DIR/deploy" status 2>&1) ||
+    refuse "could not check for a waiting deploy: $status"
+if printf '%s\n' "$status" | grep -q 'waiting to deploy'; then
+    refuse "a deploy is waiting for the night:
+$status
+A commit now would make it find this repository changed and deploy nothing."
+fi
+exit 0

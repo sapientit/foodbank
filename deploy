@@ -497,7 +497,7 @@ run_deploy() {
     local tag tag_note=""
     tag="deploy/$TARGET/$(date -u +%Y%m%dT%H%M%SZ)"
     for repo in "$CLIENT_DIR" "$SERVER_DIR"; do
-        if git -C "$repo" tag "$tag" HEAD && git -C "$repo" push -q origin "refs/tags/$tag"; then
+        if git -C "$repo" tag "$tag" HEAD && FOODBANK_PROJECT_PUSH=1 git -C "$repo" push -q origin "refs/tags/$tag"; then
             say "   $(basename "$repo"): tagged $tag"
         else
             tag_note="$tag_note

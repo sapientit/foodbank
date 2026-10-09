@@ -89,6 +89,8 @@ differ — and `git status` here does not list either folder (they are ignored).
 
 ```bash
 touch secondary.local foodbankclient/secondary.local foodbankserver/secondary.local
+git -C foodbankclient config core.hooksPath ../githooks
+git -C foodbankserver config core.hooksPath ../githooks
 ```
 
 These empty, gitignored files mark this as the secondary machine — one here, and one in each
@@ -99,8 +101,25 @@ rules shared by both. **Never create them in Pete's own working copies** (his ch
 this directory), where a push is just a push. A copy bootstrapped here, even on Pete's machine to
 trial this route, is marked: following the route is the point of it.
 
+The markers only work if whoever is working here reads them. **The two `git config` lines make git
+enforce the rules that matter**, whoever or whatever is at the keyboard — a person, Claude, Codex or
+anything else. They point both application repositories at the hooks in [`githooks/`](./githooks/),
+which come with this repository:
+
+- **`pre-push`** refuses a plain `git push`. Pushing goes through `./push`, which runs both
+  repositories' checks and records the pair it tested; a pair pushed any other way cannot be
+  deployed from this machine.
+- **`pre-commit`** refuses a commit while a deploy is running or waiting for the night, which would
+  otherwise find the repository changed and stand down.
+
+The setting is local to each clone, so it never shows as a change, and the hooks are the committed
+files here, so a fresh clone of this repository brings them. `./push` refuses to run, and
+`./check-setup` reports the machine `NOT READY`, on a marked machine without them.
+
 **Check:** `ls secondary.local foodbankclient/secondary.local foodbankserver/secondary.local` finds
-all three, and `git status` here and in both repositories lists none of them.
+all three; `git -C foodbankclient config core.hooksPath` and `git -C foodbankserver config
+core.hooksPath` both print `../githooks`; and `git status` here and in both repositories lists none
+of the markers.
 
 ## 3. The server
 
@@ -248,7 +267,8 @@ repository, and never put the guide's link in one: anyone with the link can read
 
 It checks, without showing any credential, that the charity's Cloudflare token is in this
 computer's credential store (the keychain on macOS, Credential Manager on Windows) and reaches UAT's
-databases, Workers and Turnstile widget; that the Resend key is stored and
+databases, Workers and Turnstile widget; on this machine, that both application repositories run
+the hooks from step 2; that the Resend key is stored and
 accepted; and that `deploy.local` says who is told a deploy's result. It also says whether Pete's
 personal account is signed in, which only `./deploy test` needs.
 

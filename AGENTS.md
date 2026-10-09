@@ -85,7 +85,7 @@ and do not copy any of them into another** — one copy, one place to update. In
 
 ## Status
 
-`./push`, `./deploy` and `./check-setup` are built (`deploying.md` says how a person runs them; `test/deploy-common.test.sh` tests their helpers). `./push` has been run end to end against stand-in remotes; `./deploy` has not yet been tried on test or UAT. The server's section of `bootstrap.md` is written: it
+`./push`, `./deploy` and `./check-setup` are built (`deploying.md` says how a person runs them; `test/deploy-common.test.sh` tests their helpers and the secondary machine's git hooks in `githooks/`). `./push` has been run end to end against stand-in remotes; `./deploy` has not yet been tried on test or UAT. The server's section of `bootstrap.md` is written: it
 restores the local database from `seed/uat.sql` — a `wrangler d1 export` of UAT that the person downloads
 from the charity's Drive (never committed: `seed/` is ignored) — through the server's
 `npm run db:restore:local`.

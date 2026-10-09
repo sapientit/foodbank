@@ -1,0 +1,19 @@
+#!/bin/bash
+# Installed in both application repositories on the secondary machine, by
+# "Mark this as the secondary machine" in bootstrap.md. A plain `git push`
+# skips both repositories' checks and records no tested pair, so ./deploy
+# would refuse whatever it pushed. ./push, and ./deploy when it pushes its
+# release tag, set FOODBANK_PROJECT_PUSH=1; nothing else should.
+[ "${FOODBANK_PROJECT_PUSH:-}" = 1 ] && exit 0
+
+cat >&2 <<'MESSAGE'
+STOPPED: this is the secondary machine. Push with the project's push command, not git push:
+
+    cd ..
+    ./push
+
+It runs both repositories' full checks, pushes the client and the server together and records
+the pair it tested, which a deploy from this machine insists on. See secondary.md in the
+project directory. Nothing was pushed.
+MESSAGE
+exit 1

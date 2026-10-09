@@ -30,6 +30,13 @@ push. A pair pushed any other way cannot be deployed from this machine.
 **The push command is `./push`, in this directory.** It takes several minutes, because it runs both
 application repositories' full checks. If it refuses, report why; never work around it.
 
+**Git enforces this here.** The bootstrap points both application repositories at the hooks in
+[`githooks/`](./githooks/): a plain `git push` is refused, and so is a commit while a deploy is
+running or waiting for the night. They apply to every person and every AI tool alike. If one stops
+you, do what its message says. Never get round one — no `--no-verify`, no setting
+`FOODBANK_PROJECT_PUSH` yourself (only `./push` and `./deploy` set it), and never change or remove
+`core.hooksPath`.
+
 ## Changing the commands here
 
 The commands in this directory may be changed on this machine — debugging them on Windows, for

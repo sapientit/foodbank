@@ -59,6 +59,15 @@ read -r server_branch server_position <<<"$server_state"
 say "   foodbankclient: $client_branch, $([ "$client_position" = ahead ] && echo "has commits to push" || echo "nothing to push")"
 say "   foodbankserver: $server_branch, $([ "$server_position" = ahead ] && echo "has commits to push" || echo "nothing to push")"
 
+# On the secondary machine both repositories refuse a plain `git push`. A
+# machine set up before that was added is caught here, not left unprotected.
+if [ -f "$PROJECT_DIR/secondary.local" ]; then
+    for dir in "$CLIENT_DIR" "$SERVER_DIR"; do
+        secondary_hooks_installed "$dir" ||
+            die "$(basename "$dir") does not run this machine's git hooks. Install them (bootstrap.md, \"Mark this as the secondary machine\"): git -C $(basename "$dir") config core.hooksPath $SECONDARY_HOOKS_PATH"
+    done
+fi
+
 # A deploy in progress uses these repositories; one waiting for the night
 # would stand down if GitHub changes under it.
 if [ -d "$STATE_DIR/test.lock" ] || [ -d "$STATE_DIR/uat.lock" ]; then
@@ -93,12 +102,12 @@ heading "4. Pushing"
 pushed_client=0
 pushed_server=0
 if [ "$server_position" = ahead ]; then
-    git -C "$SERVER_DIR" push -q origin "$server_branch" && pushed_server=1
+    FOODBANK_PROJECT_PUSH=1 git -C "$SERVER_DIR" push -q origin "$server_branch" && pushed_server=1
 else
     pushed_server=1
 fi
 if [ "$client_position" = ahead ]; then
-    git -C "$CLIENT_DIR" push -q origin "$client_branch" && pushed_client=1
+    FOODBANK_PROJECT_PUSH=1 git -C "$CLIENT_DIR" push -q origin "$client_branch" && pushed_client=1
 else
     pushed_client=1
 fi
