@@ -1,0 +1,18 @@
+# The application repositories are separate clones, never part of this one.
+/foodbankclient/
+/foodbankserver/
+
+# The tested-pair record, the secondary-machine marker and other per-machine state.
+*.local
+# ./push writes the record through a temporary file and renames it; one left by
+# an interrupted push must not show as a change.
+/tested-pair.local.*
+.DS_Store
+
+# The UAT database snapshot for local development. It holds staff accounts and
+# this repository is public, so it is downloaded from the charity's Drive and
+# never committed.
+/seed/
+
+# Deploy state and logs, per machine.
+/.deploy/

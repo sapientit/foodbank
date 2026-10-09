@@ -1,0 +1,128 @@
+#!/bin/bash
+# Checks that this machine is set up to push and deploy: the charity's
+# Cloudflare access, the Resend key and who is told the result.
+#
+#   ./check-setup
+#
+# It reads the credentials from the system's credential store itself and uses them only inside
+# the calls that test them. It never prints, logs or passes one on a command
+# line, so an AI session can run it without ever seeing a credential. Every
+# call it makes only reads.
+set -uo pipefail
+
+PROJECT_DIR=$(cd "$(dirname "$0")" && pwd)
+SERVER_DIR="$PROJECT_DIR/foodbankserver"
+SETTINGS="$PROJECT_DIR/deploy.local"
+
+# shellcheck source=lib/deploy-common.sh
+. "$PROJECT_DIR/lib/deploy-common.sh"
+# shellcheck source=lib/platform.sh
+. "$PROJECT_DIR/lib/platform.sh"
+require_supported_platform
+STORE=$(secret_store_name)
+
+CHARITY_ACCOUNT_ID=deb0c45ee0e89fad81d6b1227d7c439a
+CHARITY_TOKEN_KEYCHAIN=foodbank-charity-cloudflare-api-token
+RESEND_KEY_KEYCHAIN=foodbank-resend-api-key
+
+missing=0
+pass() { printf '   ok       %s\n' "$*"; }
+miss() { printf '   MISSING  %s\n' "$*"; missing=$((missing + 1)); }
+note() { printf '   note     %s\n' "$*"; }
+
+[ -d "$SERVER_DIR/node_modules" ] || die "foodbankserver is not set up yet (bootstrap step 3); its wrangler does the Cloudflare checks."
+
+heading "The charity's Cloudflare account (needed for UAT)"
+if token=$(read_secret "$CHARITY_TOKEN_KEYCHAIN") && [ -n "$token" ]; then
+    pass "the token is in $STORE"
+    # Each call proves one permission the deploy needs, on the right account.
+    if databases=$(cd "$SERVER_DIR" && CLOUDFLARE_API_TOKEN=$token CLOUDFLARE_ACCOUNT_ID=$CHARITY_ACCOUNT_ID \
+        npx wrangler d1 list --json 2>/dev/null) && printf '%s' "$databases" | grep -q '"foodbank-test"'; then
+        pass "it reaches the charity's databases (D1), including UAT's foodbank-test"
+    else
+        miss "it cannot list the charity's D1 databases — wrong token, wrong account, or no D1 permission"
+    fi
+    if (cd "$SERVER_DIR" && CLOUDFLARE_API_TOKEN=$token CLOUDFLARE_ACCOUNT_ID=$CHARITY_ACCOUNT_ID \
+        npx wrangler deployments list --name api-test --json >/dev/null 2>&1); then
+        pass "it reaches the charity's Workers, including UAT's api-test"
+    else
+        miss "it cannot read the charity's Workers — no Workers Scripts permission"
+    fi
+    if (cd "$SERVER_DIR" && CLOUDFLARE_API_TOKEN=$token CLOUDFLARE_ACCOUNT_ID=$CHARITY_ACCOUNT_ID \
+        npx wrangler turnstile widget get 0x4AAAAAAE-vkC8v_zmzPHVS --json >/dev/null 2>&1); then
+        pass "it reaches UAT's Turnstile widget"
+    else
+        miss "it cannot read UAT's Turnstile widget — no Turnstile permission"
+    fi
+    note "permission to change Workers can only be proved by a deploy; preparing one shows it."
+    unset token
+else
+    miss "the charity's Cloudflare token is not in $STORE — store it with ./store-secret $CHARITY_TOKEN_KEYCHAIN"
+fi
+
+heading "Resend (the result emails)"
+if key=$(read_secret "$RESEND_KEY_KEYCHAIN") && [ -n "$key" ]; then
+    pass "the key is in $STORE"
+    # A sending-only key may not list domains; Resend then says the key is
+    # restricted, which still proves it is a real key.
+    response=$(printf 'header = "Authorization: Bearer %s"\n' "$key" |
+        curl -sS --max-time 20 -K - -w '\n%{http_code}' https://api.resend.com/domains 2>/dev/null)
+    unset key
+    code=${response##*$'\n'}
+    body=${response%$'\n'*}
+    from=$(read_setting "$SETTINGS" RESEND_FROM)
+    domain=$(printf '%s' "$from" | sed -nE 's/.*@([^>[:space:]]+).*/\1/p')
+    case "$code" in
+        200)
+            pass "Resend accepts the key"
+            if [ -z "$domain" ]; then
+                note "no sending address yet to check a domain for (deploy.local)"
+            elif printf '%s' "$body" | node -e '
+                const d = process.argv[1];
+                let v; try { v = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch { process.exit(1); }
+                process.exit((v.data ?? []).some((x) => x.name === d && x.status === "verified") ? 0 : 1);
+            ' "$domain"; then
+                pass "$domain is verified for sending"
+            else
+                miss "$domain is not verified in Resend — add the DNS records Resend gives for it"
+            fi
+            ;;
+        401 | 403)
+            if printf '%s' "$body" | grep -q restricted; then
+                pass "Resend accepts the key (sending only, so it cannot show whether $domain is verified;"
+                note "the test email when preparing a deploy proves that)"
+            else
+                miss "Resend rejects the key"
+            fi
+            ;;
+        *) miss "Resend could not be reached to check the key (HTTP ${code:-none})" ;;
+    esac
+else
+    miss "the Resend key is not in $STORE — store it with ./store-secret $RESEND_KEY_KEYCHAIN"
+fi
+
+heading "Who is told the result (deploy.local)"
+if [ ! -f "$SETTINGS" ]; then
+    miss "deploy.local does not exist — copy deploy.local.example and fill it in"
+else
+    # Shown, not just counted: a person reading this can see they are right.
+    from=$(read_setting "$SETTINGS" RESEND_FROM)
+    to=$(read_setting "$SETTINGS" RESEND_TO)
+    case "$from" in *@*) pass "results are sent from: $from" ;; *) miss "RESEND_FROM is not an email address" ;; esac
+    case "$to" in *@*) pass "results go to: $to" ;; *) miss "RESEND_TO has no email address" ;; esac
+fi
+
+heading "Pete's personal account (test only; optional)"
+if (cd "$SERVER_DIR" && env -u CLOUDFLARE_API_TOKEN -u CLOUDFLARE_ACCOUNT_ID npx wrangler whoami 2>/dev/null |
+    grep -q ea7ad751ffa489bc577330c6eedd7500); then
+    pass "signed in: ./deploy test is available on this machine"
+else
+    note "not signed in, so ./deploy test is not available here. Only Pete can sign in to it."
+fi
+
+echo
+if [ "$missing" -gt 0 ]; then
+    echo "NOT READY: $missing item(s) missing. A person completes them — see \"Once, when the machine is set up\" in deploying.md."
+    exit 1
+fi
+echo "READY: this machine can push and deploy to UAT."

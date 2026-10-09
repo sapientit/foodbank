@@ -1,0 +1,4 @@
+# LF everywhere, on every system. Git for Windows would otherwise check files out
+# with CRLF, which breaks the bash commands here (and Prettier's LF rule in the
+# application repositories).
+* text=auto eol=lf

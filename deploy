@@ -1,0 +1,549 @@
+#!/bin/bash
+# The food bank's emergency deploy route. What it does, and why, is specified
+# in deploy-spec.md; how a person runs it is in deploying.md.
+#
+#   ./deploy test|uat     prepare a deploy, approve it, and deploy it
+#                         (overnight by default; now, in an emergency)
+#   ./deploy status       show any deploy that is waiting for the night
+#
+# Production is not on this route until go-live (deploy-spec.md).
+set -euo pipefail
+
+PROJECT_DIR=$(cd "$(dirname "$0")" && pwd)
+CLIENT_DIR="$PROJECT_DIR/foodbankclient"
+SERVER_DIR="$PROJECT_DIR/foodbankserver"
+STATE_DIR="$PROJECT_DIR/.deploy"
+# Written by the push command; see deploying.md for the format.
+TESTED_RECORD="$PROJECT_DIR/tested-pair.local"
+# Who is told the result, and from which address. Not committed.
+SETTINGS="$PROJECT_DIR/deploy.local"
+
+# shellcheck source=lib/deploy-common.sh
+. "$PROJECT_DIR/lib/deploy-common.sh"
+# shellcheck source=lib/platform.sh
+. "$PROJECT_DIR/lib/platform.sh"
+
+CHARITY_ACCOUNT_ID=deb0c45ee0e89fad81d6b1227d7c439a
+CHARITY_TOKEN_KEYCHAIN=foodbank-charity-cloudflare-api-token
+RESEND_KEY_KEYCHAIN=foodbank-resend-api-key
+
+usage() {
+    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+# ---------------------------------------------------------------------------
+# Environments
+# ---------------------------------------------------------------------------
+# Server values follow foodbankserver/docs/operations/release-pipeline.md; the
+# client's are its build settings, which this command — not memory — supplies.
+configure_target() {
+    TARGET=$1
+    case "$TARGET" in
+        test)
+            ACCOUNT=personal
+            SERVER_WRANGLER_ENV=(--env "")
+            SERVER_ENV_SHOWN='--env ""'
+            SERVER_URL=https://foodbank-server.losttemple.workers.dev
+            CLIENT_WORKER=foodbank-client
+            CLIENT_URL=https://foodbank-client.losttemple.workers.dev
+            CLIENT_CLOUDFLARE_ENV=
+            TURNSTILE_SITE_KEY=0x4AAAAAAEW-EE-GNrXmJW7R
+            TURNSTILE_WIDGET_NAME=foodbank-referral-test
+            CLIENT_AUTH_MODE=
+            CLIENT_GOOGLE_CLIENT_ID=
+            ;;
+        uat)
+            ACCOUNT=charity
+            SERVER_WRANGLER_ENV=(--env uat)
+            SERVER_ENV_SHOWN='--env uat'
+            SERVER_URL=https://api-test.guildfordfoodbank.workers.dev
+            CLIENT_WORKER=referrals-test
+            CLIENT_URL=https://referrals-test.guildfordfoodbank.workers.dev
+            CLIENT_CLOUDFLARE_ENV=uat
+            TURNSTILE_SITE_KEY=0x4AAAAAAE-vkC8v_zmzPHVS
+            TURNSTILE_WIDGET_NAME=referrals-test
+            CLIENT_AUTH_MODE=google
+            CLIENT_GOOGLE_CLIENT_ID=746866667590-us7ee47uheispedj0qtonpum27rpa2i4.apps.googleusercontent.com
+            ;;
+        production)
+            die "production is not on this route until go-live (deploy-spec.md)."
+            ;;
+        *)
+            usage >&2
+            exit 1
+            ;;
+    esac
+    DATABASE=foodbank-test
+}
+
+# Test is Pete's personal account, through his own `wrangler login`; UAT is the
+# charity's, through its token. Both variables are always set together for the
+# charity: with the token alone wrangler can resolve d1 calls to a cached
+# personal login instead.
+use_account() {
+    if [ "$ACCOUNT" = charity ]; then
+        CLOUDFLARE_API_TOKEN=$(read_secret "$CHARITY_TOKEN_KEYCHAIN") ||
+            die "the charity's Cloudflare token is not in $(secret_store_name) ($CHARITY_TOKEN_KEYCHAIN). Store it with ./store-secret $CHARITY_TOKEN_KEYCHAIN."
+        export CLOUDFLARE_API_TOKEN
+        export CLOUDFLARE_ACCOUNT_ID="$CHARITY_ACCOUNT_ID"
+    else
+        unset CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID
+    fi
+}
+
+server_wrangler() { (cd "$SERVER_DIR" && npx wrangler "$@"); }
+client_wrangler() { (cd "$CLIENT_DIR" && npx wrangler "$@"); }
+
+# ---------------------------------------------------------------------------
+# Checks shared by preparation and the deploy itself
+# ---------------------------------------------------------------------------
+# Prints the commit when the repository is on its default branch, has no
+# local changes and is exactly what GitHub holds; otherwise prints why on
+# stderr and returns 1.
+repo_matches_github() {
+    local name=$1 dir=$2 default branch head remote
+    [ -d "$dir/.git" ] || { echo "$name is not cloned at $dir" >&2; return 1; }
+    git -C "$dir" fetch -q origin 2>/dev/null || { echo "$name: cannot reach GitHub" >&2; return 1; }
+    # Tags only serve "changes since the last deploy"; a clash with a local tag
+    # must not stop a deploy.
+    git -C "$dir" fetch -q --tags origin 2>/dev/null || true
+    default=$(git -C "$dir" ls-remote --symref origin HEAD | awk '/^ref:/ { sub("refs/heads/", "", $2); print $2 }')
+    [ -n "$default" ] || { echo "$name: cannot read its default branch from GitHub" >&2; return 1; }
+    branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD)
+    [ "$branch" = "$default" ] || { echo "$name is on $branch, not its default branch $default" >&2; return 1; }
+    [ -z "$(git -C "$dir" status --porcelain)" ] || { echo "$name has uncommitted changes" >&2; return 1; }
+    head=$(git -C "$dir" rev-parse HEAD)
+    remote=$(git -C "$dir" rev-parse "origin/$default")
+    if [ "$head" != "$remote" ]; then
+        if git -C "$dir" merge-base --is-ancestor "$head" "$remote"; then
+            echo "$name is behind GitHub: pull it first" >&2
+        else
+            echo "$name has commits GitHub does not: push them with the push command first" >&2
+        fi
+        return 1
+    fi
+    printf '%s\n' "$head"
+}
+
+# "none" when it cannot be read. Three tries, so one dropped request at night
+# does not read as "something else was deployed".
+live_version() {
+    local url=$1 version
+    for _ in 1 2 3; do
+        version=$(curl -fsS --max-time 10 "$url" 2>/dev/null | json_field version) && { printf '%s\n' "$version"; return; }
+        sleep 5
+    done
+    echo none
+}
+live_server_version() { live_version "$SERVER_URL/health"; }
+live_client_version() { live_version "$CLIENT_URL/client-version.json"; }
+
+list_pending_migrations() {
+    local output
+    output=$(server_wrangler d1 migrations list "$DATABASE" --remote "${SERVER_WRANGLER_ENV[@]}" 2>&1) || {
+        echo "$output" >&2
+        return 1
+    }
+    printf '%s\n' "$output" | pending_migrations
+}
+
+read_bookmark() {
+    server_wrangler d1 time-travel info "$DATABASE" "${SERVER_WRANGLER_ENV[@]}" --json 2>/dev/null | json_field bookmark
+}
+
+send_email() {
+    local subject=$1 body=$2 from to key payload status
+    from=$(read_setting "$SETTINGS" RESEND_FROM)
+    to=$(read_setting "$SETTINGS" RESEND_TO)
+    [ -n "$from" ] && [ -n "$to" ] || { echo "deploy.local has no RESEND_FROM or RESEND_TO" >&2; return 1; }
+    key=$(read_secret "$RESEND_KEY_KEYCHAIN") || {
+        echo "the Resend key is not in $(secret_store_name) ($RESEND_KEY_KEYCHAIN)" >&2
+        return 1
+    }
+    payload=$(mktemp)
+    email_json "$from" "$to" "$subject" "$body" >"$payload" || { rm -f "$payload"; return 1; }
+    # The key goes to curl on stdin, never on its command line.
+    status=0
+    printf 'header = "Authorization: Bearer %s"\n' "$key" |
+        curl -sS --fail-with-body --max-time 30 -K - \
+            -H 'Content-Type: application/json' \
+            --data-binary "@$payload" https://api.resend.com/emails >/dev/null || status=$?
+    rm -f "$payload"
+    return "$status"
+}
+
+confirm() {
+    local prompt=$1 expected=$2 answer
+    printf '%s' "$prompt"
+    # /dev/tty, not stdin, so a pipe cannot answer for a person.
+    if ! { read -r answer </dev/tty; } 2>/dev/null; then
+        echo
+        return 1
+    fi
+    [ "$answer" = "$expected" ]
+}
+
+# ---------------------------------------------------------------------------
+# Preparation, with a person present
+# ---------------------------------------------------------------------------
+prepare() {
+    configure_target "$1"
+    use_bash_for_npm_scripts
+    mkdir -p "$STATE_DIR"
+    local stamp log
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    log="$STATE_DIR/$TARGET-$stamp.log"
+    say "Preparing a deploy to $TARGET. A full record is kept in $log"
+    exec > >(tee -a "$log") 2>&1
+
+    heading "1. Do all three repositories match GitHub?"
+    local project_sha client_sha server_sha
+    project_sha=$(repo_matches_github "this project repository" "$PROJECT_DIR") || die "fix the above, then prepare again."
+    client_sha=$(repo_matches_github foodbankclient "$CLIENT_DIR") || die "fix the above, then prepare again."
+    server_sha=$(repo_matches_github foodbankserver "$SERVER_DIR") || die "fix the above, then prepare again."
+    say "   yes"
+
+    heading "2. Is this the pair this machine tested?"
+    [ "$(tested_commit "$TESTED_RECORD" client)" = "$client_sha" ] &&
+        [ "$(tested_commit "$TESTED_RECORD" server)" = "$server_sha" ] ||
+        die "the pair on GitHub is not the pair this machine last tested. Run the push command, then prepare again."
+    say "   yes"
+
+    use_account
+    heading "3. What will be deployed"
+    local client_short migrations last_tag
+    client_short=$(git -C "$CLIENT_DIR" rev-parse --short HEAD)
+    say "   environment: $TARGET"
+    say "   client:      $(git -C "$CLIENT_DIR" log -1 --format='%h %s')"
+    say "   server:      $(git -C "$SERVER_DIR" log -1 --format='%h %s')"
+    for repo in "$CLIENT_DIR" "$SERVER_DIR"; do
+        last_tag=$(git -C "$repo" tag -l "deploy/$TARGET/*" --sort=-creatordate | head -1)
+        say
+        if [ -n "$last_tag" ]; then
+            say "   $(basename "$repo") changes since $last_tag:"
+            git -C "$repo" log --format='     %h %s' "$last_tag..HEAD" | head -40
+        else
+            say "   $(basename "$repo"): no earlier deploy to $TARGET is tagged"
+        fi
+    done
+    migrations=$(list_pending_migrations) || die "could not list the pending migrations on $TARGET."
+    say
+    if [ -n "$migrations" ]; then
+        say "   pending database migrations:"
+        printf '     %s\n' $migrations
+    else
+        say "   no pending database migrations"
+    fi
+
+    heading "4. Building both repositories for $TARGET"
+    (cd "$SERVER_DIR" && npm run -s "build:$TARGET") || die "the server build failed."
+    # Each Turnstile widget exists only in its own account, so finding it also
+    # proves the account before a client is built for it.
+    client_wrangler turnstile widget get "$TURNSTILE_SITE_KEY" --json | json_field name | grep -qx "$TURNSTILE_WIDGET_NAME" ||
+        die "the $TURNSTILE_WIDGET_NAME Turnstile widget could not be found on the $TARGET account."
+    (
+        cd "$CLIENT_DIR"
+        unset CLOUDFLARE_ENV VITE_AUTH_MODE VITE_GOOGLE_CLIENT_ID
+        [ -n "$CLIENT_CLOUDFLARE_ENV" ] && export CLOUDFLARE_ENV="$CLIENT_CLOUDFLARE_ENV"
+        [ -n "$CLIENT_AUTH_MODE" ] && export VITE_AUTH_MODE="$CLIENT_AUTH_MODE"
+        [ -n "$CLIENT_GOOGLE_CLIENT_ID" ] && export VITE_GOOGLE_CLIENT_ID="$CLIENT_GOOGLE_CLIENT_ID"
+        VITE_TURNSTILE_SITE_KEY="$TURNSTILE_SITE_KEY" npm run -s build
+    ) || die "the client build failed."
+    # The client is uploaded now as a Worker Version that takes no traffic, and
+    # checked at its own preview address. Overnight it is only switched live —
+    # nothing is built or uploaded then.
+    local alias upload version_id preview_url host
+    alias="prep-$TARGET-$(date -u +%Y%m%d%H%M%S)"
+    upload=$(client_wrangler versions upload --tag "$alias-$client_short" \
+        --message "foodbank $TARGET client $client_short" --preview-alias "$alias" 2>&1) || {
+        echo "$upload"
+        die "the client upload failed. Nothing live has changed."
+    }
+    version_id=$(printf '%s\n' "$upload" | sed -nE 's/^Worker Version ID: ([0-9a-f-]+)$/\1/p')
+    [ -n "$version_id" ] || die "the client upload did not report a Worker Version ID."
+    host=${CLIENT_URL#https://}
+    preview_url="https://$alias-$host"
+    say "   client uploaded as version $version_id; checking it at $preview_url"
+    local ok=0
+    for _ in $(seq 1 20); do
+        if (cd "$CLIENT_DIR" && node scripts/verify-client-release.mjs --url "$preview_url" \
+            --dist dist/client --expected-version "$client_short") >/dev/null 2>&1; then
+            ok=1
+            break
+        fi
+        sleep 3
+    done
+    [ "$ok" = 1 ] || die "the uploaded client did not check out at $preview_url. Nothing live has changed."
+    say "   built and checked"
+
+    heading "5. Checking what the deploy itself will need"
+    read_bookmark >/dev/null || die "the $TARGET database's Time Travel bookmark cannot be read."
+    say "   the database's Time Travel bookmark can be read"
+    send_email "Food bank deploy: test email from $TARGET preparation" \
+        "This is the test email from preparing a deploy to $TARGET. If it arrived, the result of the deploy will reach you the same way." ||
+        die "the test email could not be sent."
+    confirm "   A test email has been sent. Type yes once it has arrived: " yes || die "the test email did not arrive."
+
+    local live_server live_client
+    live_server=$(live_server_version)
+    live_client=$(live_client_version)
+
+    heading "6. Approve"
+    local tonight choice mode=""
+    tonight=$(next_overnight_epoch)
+    say "   overnight: deploys at $(london_time "$tonight") (the default)"
+    say "   now:       deploys immediately — for emergencies only"
+    printf '   Type overnight, now, or anything else to stop [overnight]: '
+    { read -r choice </dev/tty; } 2>/dev/null || choice=stop
+    case "${choice:-overnight}" in
+        overnight) mode=overnight ;;
+        now) mode=now ;;
+        *) die "not approved. Nothing is scheduled and nothing live has changed." ;;
+    esac
+
+    if [ "$mode" = now ]; then
+        say
+        say "!! Deploying now happens while the system may be in use. Someone may be part-way"
+        say "!! through a referral or a session task; nothing can detect that, and they may"
+        say "!! lose what they were doing."
+        confirm '   Type "deploy now" to continue: ' "deploy now" || die "not approved."
+        if [ -n "$migrations" ]; then
+            say
+            say "!! This deploy migrates the database. During the day that cannot be undone"
+            say "!! without a restore, and a restore loses everything written since the bookmark —"
+            say "!! real referrals."
+            confirm '   Type "migrate" to continue: ' migrate || die "not approved."
+        fi
+    fi
+
+    local state="$STATE_DIR/$TARGET-$stamp.state"
+    {
+        printf 'TARGET=%s\nMODE=%s\nLOG=%s\n' "$TARGET" "$mode" "$log"
+        printf 'PROJECT_SHA=%s\nCLIENT_SHA=%s\nCLIENT_SHORT=%s\nSERVER_SHA=%s\n' "$project_sha" "$client_sha" "$client_short" "$server_sha"
+        printf 'CLIENT_VERSION_ID=%s\nLIVE_SERVER=%s\nLIVE_CLIENT=%s\n' "$version_id" "$live_server" "$live_client"
+        printf 'RUN_AT=%s\nSTATUS=waiting\n' "$([ "$mode" = overnight ] && echo "$tonight" || date +%s)"
+    } >"$state"
+
+    if [ "$mode" = overnight ]; then
+        # nohup keeps it running when this window is closed; the run itself
+        # keeps the computer awake until it ends (lib/platform.sh).
+        nohup "$PROJECT_DIR/deploy" __run "$state" >>"$log" 2>&1 </dev/null &
+        printf 'PID=%s\n' "$!" >>"$state"
+        say
+        say "Approved. The deploy runs at $(london_time "$tonight") and emails the result."
+        say "Until then: leave this computer on mains power, awake and logged in, and do not commit,"
+        say "pull or switch branch in any of the three repositories — the deploy would stand down."
+        exit 0
+    fi
+    run_deploy "$state"
+}
+
+# ---------------------------------------------------------------------------
+# The deploy itself
+# ---------------------------------------------------------------------------
+STEP=""
+MIGRATED=0
+BOOKMARK=""
+
+set_status() { write_setting "$STATE" STATUS "$1"; }
+
+# Stops the deploy, says what is live and how to go back, and emails it.
+fail() {
+    local why=$1 body WRANGLER_CMD WRANGLER_SHOWN
+    if [ "$ACCOUNT" = charity ]; then
+        WRANGLER_CMD=./charity-wrangler
+        WRANGLER_SHOWN="from the project directory"
+    else
+        WRANGLER_CMD="npx wrangler"
+        WRANGLER_SHOWN="from foodbankserver, signed in to Pete's account"
+    fi
+    body="The $TARGET deploy stopped at: $STEP
+Reason: $why
+
+What is live now:
+  server: $(live_server_version)
+  client: $(live_client_version)
+The pair being deployed was server $SERVER_SHA, client $CLIENT_SHORT."
+    if [ "$MIGRATED" = 1 ]; then
+        body="$body
+
+The database WAS migrated, so the database and the code may not match. The deploy has
+not repaired anything. To go back (deploying.md has the detail), $WRANGLER_SHOWN:
+  1. $WRANGLER_CMD d1 time-travel info $DATABASE $SERVER_ENV_SHOWN --json   (a fresh bookmark first)
+  2. $WRANGLER_CMD rollback $SERVER_ENV_SHOWN                               (the previous server)
+  3. $WRANGLER_CMD d1 time-travel restore $DATABASE $SERVER_ENV_SHOWN --bookmark $BOOKMARK
+  4. Check referrals, stock_ledger and users exist and $SERVER_URL/ready answers 200.
+A restore replaces the whole database: anything written since the bookmark is lost."
+    elif [ -n "$BOOKMARK" ]; then
+        body="$body
+
+Nothing was migrated. Bookmark taken before migrating, for reference: $BOOKMARK"
+    else
+        body="$body
+
+Nothing was migrated."
+    fi
+    echo "FAILED: $why" >&2
+    printf '%s\n' "$body" >&2
+    set_status failed
+    send_email "Food bank deploy FAILED: $TARGET" "$body" || echo "!! the failure email could not be sent" >&2
+    exit 1
+}
+
+run_deploy() {
+    STATE=$1
+    [ -f "$STATE" ] || die "no such deploy: $STATE"
+    local key
+    for key in TARGET MODE PROJECT_SHA CLIENT_SHA CLIENT_SHORT SERVER_SHA CLIENT_VERSION_ID LIVE_SERVER LIVE_CLIENT RUN_AT; do
+        printf -v "$key" '%s' "$(read_setting "$STATE" "$key")"
+    done
+    configure_target "$TARGET"
+    use_bash_for_npm_scripts
+
+    # Awake from now until this run ends, waiting included: a computer asleep
+    # at 04:17 runs nothing.
+    local awake="$STATE_DIR/$TARGET.awake" lock="$STATE_DIR/$TARGET.lock"
+    trap 'rm -f "$awake"; rmdir "$lock" 2>/dev/null || true' EXIT
+    keep_awake_while_running "$$" "$awake"
+
+    if [ "$MODE" = overnight ]; then
+        say "Waiting until $(london_time "$RUN_AT")."
+        while [ "$(date +%s)" -lt "$RUN_AT" ]; do sleep 60; done
+    fi
+
+    # One deploy at a time for an environment.
+    until mkdir "$lock" 2>/dev/null; do sleep 30; done
+    set_status running
+    use_account
+
+    # An overnight deploy never starts in the day. If the computer slept through
+    # the night and woke at 08:00, the deploy stands down rather than run then.
+    if [ "$MODE" = overnight ] && [ "$(date +%s)" -ge "$((RUN_AT + OVERNIGHT_WINDOW_SECONDS))" ]; then
+        STEP="0. starting in the overnight window"
+        fail "it could not start before 07:00 London time (was the computer asleep?). Nothing was deployed."
+    fi
+
+    STEP="1. confirming nothing has changed since approval"
+    heading "$STEP"
+    local now_project now_client now_server
+    now_project=$(repo_matches_github "this project repository" "$PROJECT_DIR") || fail "this project repository no longer matches GitHub. Nothing was deployed."
+    now_client=$(repo_matches_github foodbankclient "$CLIENT_DIR") || fail "foodbankclient no longer matches GitHub. Nothing was deployed."
+    now_server=$(repo_matches_github foodbankserver "$SERVER_DIR") || fail "foodbankserver no longer matches GitHub. Nothing was deployed."
+    [ "$now_project" = "$PROJECT_SHA" ] || fail "this project repository changed since approval. Nothing was deployed."
+    [ "$now_client" = "$CLIENT_SHA" ] && [ "$now_server" = "$SERVER_SHA" ] ||
+        fail "GitHub no longer holds the approved pair. Nothing was deployed."
+    # Something else deployed in the meantime — another deploy, or Pete's own
+    # route. Deploying over it could undo newer work, so stand down.
+    [ "$(live_server_version)" = "$LIVE_SERVER" ] && [ "$(live_client_version)" = "$LIVE_CLIENT" ] ||
+        fail "what is live on $TARGET changed since approval. Nothing was deployed."
+    say "   nothing has changed"
+
+    STEP="2. recording a restore point"
+    heading "$STEP"
+    local migrations
+    migrations=$(list_pending_migrations) || fail "could not list the pending migrations. Nothing was deployed."
+    if [ -n "$migrations" ]; then
+        BOOKMARK=$(read_bookmark) || fail "the Time Travel bookmark could not be taken. Nothing was migrated or deployed."
+        write_setting "$STATE" BOOKMARK "$BOOKMARK"
+        say "   bookmark $BOOKMARK"
+    else
+        say "   no migrations pending; skipped"
+    fi
+
+    STEP="3. migrating and deploying"
+    heading "$STEP"
+    if [ -n "$migrations" ]; then
+        MIGRATED=1
+        # CI=true and no stdin: wrangler applies without asking, as unattended.
+        (cd "$SERVER_DIR" && CI=true npm run -s "db:migrate:$TARGET" </dev/null) || fail "the migration failed."
+    fi
+    (cd "$SERVER_DIR" && CI=true npm run -s "deploy:$TARGET:built" </dev/null) || fail "the server deploy failed."
+    (cd "$STATE_DIR" && "$CLIENT_DIR/node_modules/.bin/wrangler" versions deploy "$CLIENT_VERSION_ID@100" \
+        --name "$CLIENT_WORKER" --message "foodbank $TARGET client $CLIENT_SHORT" --yes </dev/null) ||
+        fail "the client deploy failed. The new server is live with the previous client."
+
+    STEP="4. verifying"
+    heading "$STEP"
+    local ok=0
+    for _ in $(seq 1 30); do
+        [ "$(live_server_version)" = "$SERVER_SHA" ] && { ok=1; break; }
+        sleep 3
+    done
+    [ "$ok" = 1 ] || fail "the server did not report version $SERVER_SHA within 90 seconds."
+    curl -fsS --max-time 10 "$SERVER_URL/ready" 2>/dev/null | grep -q '"status":"ok"' ||
+        fail "the server's /ready check failed: the database is not answering."
+    ok=0
+    for _ in $(seq 1 20); do
+        if (cd "$CLIENT_DIR" && node scripts/verify-client-release.mjs --url "$CLIENT_URL" \
+            --expected-version "$CLIENT_SHORT") >/dev/null 2>&1; then
+            ok=1
+            break
+        fi
+        sleep 3
+    done
+    [ "$ok" = 1 ] || fail "the client did not serve version $CLIENT_SHORT within 60 seconds."
+    ok=0
+    for _ in $(seq 1 20); do
+        curl -fsS --max-time 10 "$CLIENT_URL/api/v1/public/sessions" 2>/dev/null |
+            node -e 'let v; try { v = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch { process.exit(1); } process.exit(v && Array.isArray(v.sessions) ? 0 : 1);' &&
+            { ok=1; break; }
+        sleep 3
+    done
+    [ "$ok" = 1 ] || fail "a public API request did not work through the client."
+    say "   server $SERVER_SHA, client $CLIENT_SHORT, both answering"
+
+    STEP="5. recording the deploy"
+    heading "$STEP"
+    local tag tag_note=""
+    tag="deploy/$TARGET/$(date -u +%Y%m%dT%H%M%SZ)"
+    for repo in "$CLIENT_DIR" "$SERVER_DIR"; do
+        if git -C "$repo" tag "$tag" HEAD && git -C "$repo" push -q origin "refs/tags/$tag"; then
+            say "   $(basename "$repo"): tagged $tag"
+        else
+            tag_note="$tag_note
+Note: the tag $tag could not be recorded in $(basename "$repo")."
+        fi
+    done
+
+    STEP="6. reporting"
+    heading "$STEP"
+    set_status succeeded
+    send_email "Food bank deploy succeeded: $TARGET" "The $TARGET deploy succeeded.
+
+  server: $SERVER_SHA
+  client: $CLIENT_SHORT
+${BOOKMARK:+  bookmark taken before migrating: $BOOKMARK
+}$tag_note" || echo "!! the success email could not be sent" >&2
+    say "DONE: $TARGET runs server $SERVER_SHA and client $CLIENT_SHORT"
+}
+
+show_status() {
+    local found=0 state
+    for state in "$STATE_DIR"/*.state; do
+        [ -f "$state" ] || continue
+        [ "$(read_setting "$state" STATUS)" = waiting ] || continue
+        local pid
+        pid=$(read_setting "$state" PID)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            say "$(read_setting "$state" TARGET): waiting to deploy at $(london_time "$(read_setting "$state" RUN_AT)") (process $pid)"
+        else
+            say "$(read_setting "$state" TARGET): was waiting, but its process is gone — it will not run. Prepare again."
+        fi
+        found=1
+    done
+    [ "$found" = 1 ] || say "No deploy is waiting."
+}
+
+case "${1:-}" in
+    -h | --help | "") ;;
+    *) require_supported_platform ;;
+esac
+
+case "${1:-}" in
+    test | uat | production) prepare "$1" ;;
+    status) show_status ;;
+    # Started by an approved overnight deploy; its output already goes to the log.
+    __run) run_deploy "$2" ;;
+    -h | --help | "") usage ;;
+    *) usage >&2; exit 1 ;;
+esac

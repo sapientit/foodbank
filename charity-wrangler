@@ -1,0 +1,29 @@
+#!/bin/bash
+# Runs one wrangler command against the charity's Cloudflare account, from
+# foodbankserver, with the charity's token read from this computer's credential
+# store. For the steps a person carries out by hand — putting a failed deploy
+# back, for instance — on macOS or Windows alike:
+#
+#   ./charity-wrangler d1 time-travel info foodbank-test --env uat --json
+#   ./charity-wrangler rollback --env uat
+#
+# Both the token and the account id are set, always together: with the token
+# alone wrangler can pick a different, cached account.
+set -euo pipefail
+
+PROJECT_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/deploy-common.sh
+. "$PROJECT_DIR/lib/deploy-common.sh"
+# shellcheck source=lib/platform.sh
+. "$PROJECT_DIR/lib/platform.sh"
+
+[ $# -gt 0 ] || { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+require_supported_platform
+
+CLOUDFLARE_API_TOKEN=$(read_secret foodbank-charity-cloudflare-api-token) ||
+    die "the charity's Cloudflare token is not in $(secret_store_name). Store it with ./store-secret foodbank-charity-cloudflare-api-token."
+export CLOUDFLARE_API_TOKEN
+export CLOUDFLARE_ACCOUNT_ID=deb0c45ee0e89fad81d6b1227d7c439a
+
+cd "$PROJECT_DIR/foodbankserver" || die "foodbankserver is not cloned here."
+exec npx wrangler "$@"

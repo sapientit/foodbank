@@ -1,0 +1,128 @@
+#!/bin/bash
+# Pushes the client and the server together, only after both repositories'
+# full checks pass, and records the pair it tested for ./deploy. The design is
+# "Pushing" in foodbankclient/docs/planning/release-pipeline.md.
+#
+#   ./push        check both, push whichever has anything unpushed, record the pair
+#
+# With nothing to push it still checks both and records the pair: that is how a
+# machine records a pair pushed from elsewhere, after pulling.
+set -euo pipefail
+
+PROJECT_DIR=$(cd "$(dirname "$0")" && pwd)
+CLIENT_DIR="$PROJECT_DIR/foodbankclient"
+SERVER_DIR="$PROJECT_DIR/foodbankserver"
+STATE_DIR="$PROJECT_DIR/.deploy"
+TESTED_RECORD="$PROJECT_DIR/tested-pair.local"
+
+# shellcheck source=lib/deploy-common.sh
+. "$PROJECT_DIR/lib/deploy-common.sh"
+# shellcheck source=lib/platform.sh
+. "$PROJECT_DIR/lib/platform.sh"
+
+case "${1:-}" in
+    "") ;;
+    -h | --help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "./push takes no arguments" >&2; exit 1 ;;
+esac
+require_supported_platform
+use_bash_for_npm_scripts
+
+# Prints "<default branch> <position>" for a repository, after refusing one
+# with local changes, on another branch, or behind or diverged from GitHub.
+repo_ready() {
+    local name=$1 dir=$2 default head remote position
+    [ -d "$dir/.git" ] || die "$name is not cloned at $dir."
+    [ -z "$(git -C "$dir" status --porcelain)" ] ||
+        die "$name has uncommitted changes. The checks run on the files on disk, so commit them (or set them aside) first."
+    git -C "$dir" fetch -q origin 2>/dev/null || die "$name: cannot reach GitHub."
+    default=$(git -C "$dir" ls-remote --symref origin HEAD | awk '/^ref:/ { sub("refs/heads/", "", $2); print $2 }')
+    [ -n "$default" ] || die "$name: cannot read its default branch from GitHub."
+    [ "$(git -C "$dir" rev-parse --abbrev-ref HEAD)" = "$default" ] ||
+        die "$name is not on its default branch, $default."
+    head=$(git -C "$dir" rev-parse HEAD)
+    remote=$(git -C "$dir" rev-parse "origin/$default")
+    position=$(branch_position "$dir" "$head" "$remote")
+    case "$position" in
+        behind) die "$name is behind GitHub: someone has pushed since this machine last pulled. Pull it, then push." ;;
+        diverged) die "$name and GitHub have both moved on. Pull it and settle the difference, then push." ;;
+    esac
+    printf '%s %s\n' "$default" "$position"
+}
+
+heading "1 and 2. Are both repositories committed and up to date with GitHub?"
+# repo_ready stops in a subshell here, so its refusal must stop this script too.
+client_state=$(repo_ready foodbankclient "$CLIENT_DIR") || exit 1
+server_state=$(repo_ready foodbankserver "$SERVER_DIR") || exit 1
+read -r client_branch client_position <<<"$client_state"
+read -r server_branch server_position <<<"$server_state"
+say "   foodbankclient: $client_branch, $([ "$client_position" = ahead ] && echo "has commits to push" || echo "nothing to push")"
+say "   foodbankserver: $server_branch, $([ "$server_position" = ahead ] && echo "has commits to push" || echo "nothing to push")"
+
+# A deploy in progress uses these repositories; one waiting for the night
+# would stand down if GitHub changes under it.
+if [ -d "$STATE_DIR/test.lock" ] || [ -d "$STATE_DIR/uat.lock" ]; then
+    die "a deploy is running now. Wait for its result, then push."
+fi
+if [ -x "$PROJECT_DIR/deploy" ] && "$PROJECT_DIR/deploy" status | grep -q 'waiting to deploy'; then
+    if [ "$client_position" = ahead ] || [ "$server_position" = ahead ]; then
+        "$PROJECT_DIR/deploy" status
+        printf 'Pushing now means that deploy will find GitHub changed and deploy nothing. Type yes to push anyway: '
+        { read -r answer </dev/tty; } 2>/dev/null || answer=
+        [ "$answer" = yes ] || die "not pushed."
+    fi
+fi
+
+client_sha=$(git -C "$CLIENT_DIR" rev-parse HEAD)
+server_sha=$(git -C "$SERVER_DIR" rev-parse HEAD)
+
+# Server first: the client's check compares the client against this server's
+# API contract (../foodbankserver/openapi.yaml), so it runs whichever changed.
+heading "3. Running the server's full checks"
+(cd "$SERVER_DIR" && npm run check) || die "the server's checks failed. Nothing was pushed."
+heading "3. Running the client's full checks, including the API contract"
+(cd "$CLIENT_DIR" && npm run check) || die "the client's checks failed. Nothing was pushed."
+
+# The checks must not have changed anything they checked.
+[ "$(git -C "$CLIENT_DIR" rev-parse HEAD)" = "$client_sha" ] && [ -z "$(git -C "$CLIENT_DIR" status --porcelain)" ] ||
+    die "foodbankclient changed while its checks ran. Nothing was pushed."
+[ "$(git -C "$SERVER_DIR" rev-parse HEAD)" = "$server_sha" ] && [ -z "$(git -C "$SERVER_DIR" status --porcelain)" ] ||
+    die "foodbankserver changed while its checks ran. Nothing was pushed."
+
+heading "4. Pushing"
+pushed_client=0
+pushed_server=0
+if [ "$server_position" = ahead ]; then
+    git -C "$SERVER_DIR" push -q origin "$server_branch" && pushed_server=1
+else
+    pushed_server=1
+fi
+if [ "$client_position" = ahead ]; then
+    git -C "$CLIENT_DIR" push -q origin "$client_branch" && pushed_client=1
+else
+    pushed_client=1
+fi
+
+if [ "$pushed_client" = 1 ] && [ "$pushed_server" = 1 ]; then
+    write_tested_record "$TESTED_RECORD" "$client_sha" "$server_sha"
+    say "   client $(git -C "$CLIENT_DIR" log -1 --format='%h %s')"
+    say "   server $(git -C "$SERVER_DIR" log -1 --format='%h %s')"
+    say
+    if [ "$client_position" = ahead ] || [ "$server_position" = ahead ]; then
+        say "DONE: both repositories are on GitHub, and this pair is recorded as tested."
+    else
+        say "DONE: nothing needed pushing; this pair is recorded as tested on this machine."
+    fi
+    exit 0
+fi
+
+# Git cannot push two repositories in one step. Say exactly what happened: the
+# pair on GitHub now was never tested together, and ./deploy will refuse it.
+heading "5. ONLY ONE REPOSITORY WAS PUSHED"
+[ "$pushed_server" = 1 ] && say "   foodbankserver: pushed" || say "   foodbankserver: NOT pushed"
+[ "$pushed_client" = 1 ] && say "   foodbankclient: pushed" || say "   foodbankclient: NOT pushed"
+say
+say "GitHub now holds a pair that was never tested together. Nothing was recorded as tested,"
+say "so ./deploy will refuse it. Find out why the push was rejected (often: someone pushed"
+say "first — pull, then run ./push again)."
+exit 1

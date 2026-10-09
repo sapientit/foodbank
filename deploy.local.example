@@ -1,0 +1,12 @@
+# The shape of deploy.local, which the bootstrap writes (step 6) and ./deploy
+# reads. deploy.local is not committed; this file is.
+#
+# This repository is public, so no recipient addresses are kept here. The
+# current list is in the technicians' handover guide ("Food Bank System —
+# Handover Guide", section "Setting up a machine"), as a line to paste.
+#
+# The address the result emails come from: a role address, not a person's.
+# Its domain must be verified in Resend.
+RESEND_FROM=Food bank releases <releases@guildfordfoodbank.org>
+# Who is told the result: one address, or several separated by commas.
+RESEND_TO=
