@@ -1,5 +1,8 @@
 # AGENTS.md
 
+**If `secondary.local` exists in this directory, this is the charity's secondary machine: read
+[`secondary.md`](./secondary.md) before anything else and follow it.**
+
 This is the **project directory** for the food bank system. It holds the commands that set up a
 machine and release the system, and nothing else. The application itself is two separate
 repositories, cloned inside this one:
@@ -38,7 +41,8 @@ side, what it provides to these commands, is in
 and do not copy any of them into another** — one copy, one place to update. In outline:
 
 - **Push** pushes both application repositories together, only after both repositories' full checks
-  pass, and records the tested pair in a gitignored local file.
+  pass, and records the tested pair in a gitignored local file. It never pushes this repository: a fix to
+  these commands — debugging them on Windows on the secondary machine, say — is pushed separately.
 - **Deploy** has a preparation part, with someone online — every check, the build, then an approval —
   and by default deploys unattended overnight on the same machine, at 04:17 London time, and
   emails the result through Resend. A failure waits for a person at 07:00.

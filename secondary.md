@@ -24,11 +24,19 @@ these rules.
 3. records the tested pair — the client and server commits it checked — on this machine, which is
    what a deploy later insists on.
 
-So never run `git push` in either repository, never push one repository on its own, and never force a
+So never run `git push` in either application repository, never push one of them on its own, and never force a
 push. A pair pushed any other way cannot be deployed from this machine.
 
 **The push command is `./push`, in this directory.** It takes several minutes, because it runs both
-repositories' full checks. If it refuses, report why; never work around it.
+application repositories' full checks. If it refuses, report why; never work around it.
+
+## Changing the commands here
+
+The commands in this directory may be changed on this machine — debugging them on Windows, for
+instance. A fix here is handled separately from application changes: `./push` never pushes
+this repository, and a fix is committed and pushed on its own, with `git push` in this directory,
+after `test/deploy-common.test.sh` passes. `./deploy` refuses to run while this repository has
+anything uncommitted or unpushed.
 
 ## Deploying
 
