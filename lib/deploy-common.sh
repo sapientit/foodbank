@@ -45,7 +45,10 @@ tested_commit() {
 # Migration file names in `wrangler d1 migrations list` output, one per line.
 # Prints nothing when there are none to apply.
 pending_migrations() {
-    grep -oE '[0-9]{4}_[A-Za-z0-9_.-]+\.sql' | awk '!seen[$0]++'
+    # grep uses status 1 for a normal no-match result. Under the deploy
+    # command's pipefail setting, normalise that result so no pending
+    # migrations does not stop deployment preparation.
+    { grep -oE '[0-9]{4}_[A-Za-z0-9_.-]+\.sql' || [ "$?" -eq 1 ]; } | awk '!seen[$0]++'
 }
 
 # The bookmark from `wrangler d1 time-travel info --json`, or nothing.

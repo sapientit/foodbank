@@ -56,7 +56,10 @@ printf 'client abc123\n' >"$tmp/short"
 check "record: a short or malformed commit is not accepted" "" "$(tested_commit "$tmp/short" client)"
 
 # --- pending migrations -----------------------------------------------------
-check "migrations: none to apply" "" "$(printf '✅ No migrations to apply!\n' | pending_migrations)"
+none=$(printf '✅ No migrations to apply!\n' | pending_migrations)
+none_status=$?
+check "migrations: none to apply" "" "$none"
+check "migrations: no matches succeed with pipefail" "0" "$none_status"
 list=$(printf '%s\n' \
     'Migrations to be applied:' \
     '┌──────────────────────────────┐' \
