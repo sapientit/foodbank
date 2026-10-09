@@ -18,7 +18,7 @@ Git for Windows), never Command Prompt or PowerShell. Every command below is the
    ```bash
    # The charity's Cloudflare API token (needed for UAT).
    ./store-secret foodbank-charity-cloudflare-api-token
-   # The Resend API key (needed for every deploy: it sends the result email).
+   # The Resend API key (needed for UAT deploy-result emails).
    ./store-secret foodbank-resend-api-key
    ```
 
@@ -66,9 +66,10 @@ see [`secondary.md`](./secondary.md).
 ./deploy uat          # or: ./deploy test
 ```
 
-It checks everything and builds, then stops for you at three points:
+It checks everything and builds, then stops for you at these points:
 
-- **"Type yes once it has arrived"** — check the test email reached the recipients.
+- For **UAT only**, **"Type yes once it has arrived"** — check the test email reached the
+  recipients. **Test sends no email.**
 - **"Type overnight, now, or anything else to stop"** — press Enter for **overnight**, the normal
   choice. Type **now** only in an emergency (below).
 
@@ -87,15 +88,17 @@ It checks everything and builds, then stops for you at three points:
 
 ### 3. In the morning
 
-**Read the result email.** "succeeded" needs nothing more. "FAILED" says which step stopped, what is
-live, and — if the database was migrated — the steps to go back (below). **No email at all means
-the deploy did not run**; `./deploy status` and the log in `.deploy/` say why.
+For **UAT**, read the result email. "succeeded" needs nothing more. "FAILED" says which step
+stopped, what is live, and — if the database was migrated — the steps to go back (below). **No email
+at all means the deploy did not run**; `./deploy status` and the log in `.deploy/` say why.
+
+For **test**, there is deliberately no email: read the terminal result and the log in `.deploy/`.
 
 ## Deploying now, in an emergency
 
 At the approval, type **now**. You are warned that people may be using the system, and asked to type
 `deploy now`; if the deploy migrates the database, you are warned again and asked to type `migrate`.
-It then deploys straight away, while you watch. The result is still emailed.
+It then deploys straight away, while you watch. UAT emails the result; test does not.
 
 ## If a deploy fails after migrating
 

@@ -241,11 +241,12 @@ npm run dev                  # http://localhost:5173
 3. Optional: to see the team lead's screens, add a user with the team lead role at `/users`, then sign
    in as them. There is deliberately no seeded team lead.
 
-## 6. Confirm who is told deploy results
+## 6. Confirm who is told UAT deploy results
 
-Every deploy emails its result. The recipients are **not** in this repository, which is public: the
-current list is in the technicians' handover guide, **"Food Bank System — Handover Guide"**, section
-"Setting up a machine", as a line beginning `RESEND_TO=`.
+While this route has test and UAT only, **UAT deploys email their result; test deploys do not.** The
+recipients are **not** in this repository, which is public: the current list is in the technicians'
+handover guide, **"Food Bank System — Handover Guide"**, section "Setting up a machine", as a line
+beginning `RESEND_TO=`.
 
 1. **Ask the person to open that guide and paste the `RESEND_TO=` line.** Do not guess or invent
    addresses, and do not look for the guide yourself. If `deploy.local` already exists, show its

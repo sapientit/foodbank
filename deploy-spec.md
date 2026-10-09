@@ -38,7 +38,14 @@ and in what the person is asked to confirm.
   record. A deploy never runs the tests itself; it trusts that record.
 - **The machine holds the credentials in its own credential store** (the keychain on macOS,
   Credential Manager on Windows): the charity's Cloudflare API token and the
-  Resend API key. Nothing else holds them.
+  Resend API key. Nothing else holds them. The Resend key is needed for UAT, not test.
+
+## Deploy-result emails
+
+**While this route has test and UAT only, UAT is the sole environment that sends deploy emails.**
+Test is a private proving ground: its preparation, success and failure are reported in the terminal
+and `.deploy/` log, not by email. When production joins the route, production becomes the sole
+email environment and this rule is changed in the same release.
 
 ## Preparation
 
@@ -60,7 +67,7 @@ Run by a person, in the evening for an overnight deploy. The command:
    deploy itself uses exactly these files and builds nothing.
 5. **Checks everything the deploy itself will need**, so it cannot fail for a reason knowable now:
    the Cloudflare token works against the charity's account, the database's Time Travel bookmark can
-   be read, and a test email sent through Resend arrives.
+   be read, and for UAT a test email sent through Resend arrives. Test skips the email check.
 6. **Asks the person to choose and approve:**
    - **Overnight (the default)** — schedules the deploy itself for **04:17 London time** that
      night. Nothing on the live system changes until then. That is clear of the server's own nightly
@@ -78,7 +85,7 @@ The same steps whichever was chosen. For an overnight deploy, the machine that r
 left on, awake and online until it has finished.
 
 1. **Confirms GitHub still holds exactly the approved pair**, and that this project repository has
-   not changed. If anything has changed since approval, it deploys nothing and emails why.
+   not changed. If anything has changed since approval, it deploys nothing; for UAT it emails why.
 2. **If there are migrations to apply, records a restore point.** It takes the database's current
    Time Travel bookmark and saves it with the deploy record. If the bookmark cannot be taken, it
    stops before migrating. With no migrations pending, this step is skipped.
@@ -90,9 +97,10 @@ left on, awake and online until it has finished.
    seconds.
 5. **Records the deploy** by pushing a tag naming the environment and time to both application
    repositories.
-6. **Emails the result through Resend.** Success names the environment and both commits. Failure
-   names the step that failed, what is now live, and — if it had migrated — the bookmark and the
-   steps to go back. **The email holds no personal data.**
+6. **For UAT, emails the result through Resend.** Success names the environment and both commits.
+   Failure names the step that failed, what is now live, and — if it had migrated — the bookmark and
+   the steps to go back. **The email holds no personal data.** Test sends no email; its terminal and
+   `.deploy/` log carry the same result.
 
 ## Deploying now
 
@@ -107,8 +115,8 @@ preparation step 6, and runs the deploy itself straight away.
 - **If there are migrations, the command says so separately** and asks again: a migration during
   the day cannot be undone without a database restore, and a restore would lose everything written
   since the bookmark — real referrals, during the day.
-- **The person is present, so a failure is theirs to handle there and then.** The result is still
-  emailed, as for an overnight deploy.
+- **The person is present, so a failure is theirs to handle there and then.** UAT emails the result;
+  test writes it to the terminal and `.deploy/` log.
 - **Deploying now needs no special care around the server's nightly job.** An overlap with it does
   no harm worth waiting for or refusing over.
 

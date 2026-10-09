@@ -69,6 +69,12 @@ list=$(printf '%s\n' \
     '└──────────────────────────────┘' | pending_migrations | tr '\n' ' ')
 check "migrations: names read from the table" "0041_add_collection_notes.sql 0042_index-sessions.sql " "$list"
 
+# --- deploy notification environment ----------------------------------------
+deploy_sends_email test
+check "notifications: test sends no email" "1" "$?"
+deploy_sends_email uat
+check "notifications: UAT sends email" "0" "$?"
+
 # --- JSON -------------------------------------------------------------------
 check "json: bookmark read" "00000085-0000024c" "$(printf '{"bookmark":"00000085-0000024c","timestamp":"x"}' | json_field bookmark)"
 check "json: version read" "abc1234" "$(printf '{"status":"ok","version":"abc1234"}' | json_field version)"

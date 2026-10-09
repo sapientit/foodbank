@@ -279,10 +279,14 @@ prepare() {
     heading "5. Checking what the deploy itself will need"
     read_bookmark >/dev/null || die "the $TARGET database's Time Travel bookmark cannot be read."
     say "   the database's Time Travel bookmark can be read"
-    send_email "Food bank deploy: test email from $TARGET preparation" \
-        "This is the test email from preparing a deploy to $TARGET. If it arrived, the result of the deploy will reach you the same way." ||
-        die "the test email could not be sent."
-    confirm "   A test email has been sent. Type yes once it has arrived: " yes || die "the test email did not arrive."
+    if deploy_sends_email "$TARGET"; then
+        send_email "Food bank deploy: test email from $TARGET preparation" \
+            "This is the test email from preparing a deploy to $TARGET. If it arrived, the result of the deploy will reach you the same way." ||
+            die "the test email could not be sent."
+        confirm "   A test email has been sent. Type yes once it has arrived: " yes || die "the test email did not arrive."
+    else
+        say "   test deployments do not send email"
+    fi
 
     local live_server live_client
     live_server=$(live_server_version)
@@ -330,7 +334,11 @@ prepare() {
         nohup "$PROJECT_DIR/deploy" __run "$state" >>"$log" 2>&1 </dev/null &
         printf 'PID=%s\n' "$!" >>"$state"
         say
-        say "Approved. The deploy runs at $(london_time "$tonight") and emails the result."
+        if deploy_sends_email "$TARGET"; then
+            say "Approved. The deploy runs at $(london_time "$tonight") and emails the result."
+        else
+            say "Approved. The deploy runs at $(london_time "$tonight"). Test deployments do not send email."
+        fi
         say "Until then: leave this computer on mains power, awake and logged in, and do not commit,"
         say "pull or switch branch in any of the three repositories — the deploy would stand down."
         exit 0
@@ -347,7 +355,7 @@ BOOKMARK=""
 
 set_status() { write_setting "$STATE" STATUS "$1"; }
 
-# Stops the deploy, says what is live and how to go back, and emails it.
+# Stops the deploy, says what is live and how to go back, and emails UAT only.
 fail() {
     local why=$1 body WRANGLER_CMD WRANGLER_SHOWN
     if [ "$ACCOUNT" = charity ]; then
@@ -386,7 +394,9 @@ Nothing was migrated."
     echo "FAILED: $why" >&2
     printf '%s\n' "$body" >&2
     set_status failed
-    send_email "Food bank deploy FAILED: $TARGET" "$body" || echo "!! the failure email could not be sent" >&2
+    if deploy_sends_email "$TARGET"; then
+        send_email "Food bank deploy FAILED: $TARGET" "$body" || echo "!! the failure email could not be sent" >&2
+    fi
     exit 1
 }
 
@@ -508,12 +518,14 @@ Note: the tag $tag could not be recorded in $(basename "$repo")."
     STEP="6. reporting"
     heading "$STEP"
     set_status succeeded
-    send_email "Food bank deploy succeeded: $TARGET" "The $TARGET deploy succeeded.
+    if deploy_sends_email "$TARGET"; then
+        send_email "Food bank deploy succeeded: $TARGET" "The $TARGET deploy succeeded.
 
   server: $SERVER_SHA
   client: $CLIENT_SHORT
 ${BOOKMARK:+  bookmark taken before migrating: $BOOKMARK
 }$tag_note" || echo "!! the success email could not be sent" >&2
+    fi
     say "DONE: $TARGET runs server $SERVER_SHA and client $CLIENT_SHORT"
 }
 

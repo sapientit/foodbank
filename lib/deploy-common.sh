@@ -51,6 +51,12 @@ pending_migrations() {
     { grep -oE '[0-9]{4}_[A-Za-z0-9_.-]+\.sql' || [ "$?" -eq 1 ]; } | awk '!seen[$0]++'
 }
 
+# Until production joins this route, UAT is the environment whose deploys
+# notify the recipients. Test is a private proving ground and sends no email.
+deploy_sends_email() {
+    [ "$1" = uat ]
+}
+
 # The bookmark from `wrangler d1 time-travel info --json`, or nothing.
 json_field() {
     node -e '
