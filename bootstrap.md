@@ -262,6 +262,13 @@ line of its own** — `NOT READY: <each MISSING item>` — before anything that 
 person to complete those items from "Once, when the machine is set up" in `deploying.md`, then run
 `./check-setup` again.
 
+**Run this final check from the person's normal Terminal or Git Bash, not from a restricted AI
+terminal.** An AI sandbox can be denied access to the macOS Keychain or Windows Credential Manager;
+in that case it can report a stored credential as `MISSING`. That result proves only that the
+sandbox could not read the credential store. The person runs `./check-setup` themselves to decide
+whether a credential is genuinely missing; do not tell them to replace or re-enter a credential
+based only on the restricted check.
+
 **Check:** `./check-setup` ends with `READY`. If it does not, the bootstrap is not complete, and the
 final report opens with `NOT READY` and the missing items.
 
