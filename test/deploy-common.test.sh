@@ -75,6 +75,15 @@ check "notifications: test sends no email" "1" "$?"
 deploy_sends_email uat
 check "notifications: UAT sends email" "0" "$?"
 
+# --- safe Cloudflare diagnostics --------------------------------------------
+check "diagnostics: account id excludes signed-in email" "ea7ad751ffa489bc577330c6eedd7500" \
+    "$(printf "👋 You are logged in with an OAuth Token, associated with the email person@example.org.\n│ Personal Account │ ea7ad751ffa489bc577330c6eedd7500 │\n" | wrangler_account_id)"
+unset DEPLOY_TEST_SECRET
+check "diagnostics: unset variable reveals no value" "unset" "$(environment_variable_state DEPLOY_TEST_SECRET)"
+DEPLOY_TEST_SECRET=not-logged
+check "diagnostics: set variable reveals no value" "set" "$(environment_variable_state DEPLOY_TEST_SECRET)"
+unset DEPLOY_TEST_SECRET
+
 # --- JSON -------------------------------------------------------------------
 check "json: bookmark read" "00000085-0000024c" "$(printf '{"bookmark":"00000085-0000024c","timestamp":"x"}' | json_field bookmark)"
 check "json: version read" "abc1234" "$(printf '{"status":"ok","version":"abc1234"}' | json_field version)"

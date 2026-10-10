@@ -57,6 +57,20 @@ deploy_sends_email() {
     [ "$1" = uat ]
 }
 
+# The first account id reported by `wrangler whoami`. Its surrounding output
+# contains the signed-in email, so callers must log only this extracted value.
+wrangler_account_id() {
+    sed -nE 's/.*([0-9a-f]{32}).*/\1/p' | head -1
+}
+
+# Says whether an environment variable exists without ever printing its value.
+environment_variable_state() {
+    case "${!1+x}" in
+        x) printf 'set\n' ;;
+        *) printf 'unset\n' ;;
+    esac
+}
+
 # The bookmark from `wrangler d1 time-travel info --json`, or nothing.
 json_field() {
     node -e '

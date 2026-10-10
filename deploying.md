@@ -93,6 +93,10 @@ stopped, what is live, and — if the database was migrated — the steps to go 
 at all means the deploy did not run**; `./deploy status` and the log in `.deploy/` say why.
 
 For **test**, there is deliberately no email: read the terminal result and the log in `.deploy/`.
+At the start of an unattended test deployment, the log records the selected Cloudflare account ID,
+whether Cloudflare credential variables were set, and whether D1 lists `foodbank-test`. It never
+records a token or the signed-in email. Those lines distinguish the account, credential-source and
+D1-access failures before the migration check runs.
 
 ## Deploying now, in an emergency
 
