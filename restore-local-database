@@ -1,0 +1,19 @@
+#!/bin/bash
+# The only bootstrap route for the local database. It requires the private UAT
+# snapshot before handing it to the server's documented restore command.
+#
+#   ./restore-local-database
+set -euo pipefail
+
+PROJECT_DIR=$(cd "$(dirname "$0")" && pwd)
+SERVER_DIR="$PROJECT_DIR/foodbankserver"
+SEED="$PROJECT_DIR/seed/uat.sql"
+
+[ -d "$SERVER_DIR" ] || {
+    echo "STOPPED: foodbankserver is not cloned yet. Complete bootstrap step 2 first." >&2
+    exit 1
+}
+"$PROJECT_DIR/require-seed"
+
+cd "$SERVER_DIR"
+exec npm run db:restore:local -- "$SEED"

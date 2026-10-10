@@ -158,10 +158,18 @@ Google Drive, and the technicians' handover guide (**"Food Bank System — Hando
 1. **Ask the person to download it** from that link and save it in this directory as
    `seed/uat.sql`. The `seed/` folder is ignored by git, so it can never be committed. Do not look for
    the link yourself, and never write it into a committed file.
-2. Then, from `foodbankserver`:
+2. **Stop here until the file exists.** This is a hard gate: an AI must ask the person for the dump,
+   not create an empty database, use another machine's database, or run `db:migrate:local` as a
+   substitute. From this project directory, check it without reading or printing its contents:
 
 ```bash
-npm run db:restore:local -- ../seed/uat.sql
+./require-seed
+```
+
+3. Restore through the guarded project command:
+
+```bash
+./restore-local-database
 ```
 
 This creates the tables, loads the rows, applies any migrations newer than the snapshot and makes
@@ -169,8 +177,9 @@ This creates the tables, loads the rows, applies any migrations newer than the s
 server is running. Run it again whenever a fresh snapshot is wanted; the database it replaces is
 moved to `foodbankserver/.wrangler/state/v3/d1.before-restore-<time>`, not deleted.
 
-If `seed/uat.sql` is missing, use `npm run db:migrate:local` instead: an empty database holding only
-the `pete@x.com` admin. Everything below still works, with nothing to look at.
+**There is no empty-database fallback.** Without `seed/uat.sql`, local setup is incomplete and the
+agent stops for the person. The snapshot is deliberately required so local development begins with
+the controlled UAT data shape and the staff accounts it needs.
 
 ### Start it
 

@@ -72,6 +72,10 @@ and do not copy any of them into another** — one copy, one place to update. In
   the applications' own `npm` scripts. `curl` sends the Resend email.
 - **An AI session never releases to production or migrates the production database.** It may build
   and test the commands against local development and, with Pete's explicit go-ahead, UAT.
+- **The local database must be restored from the private UAT snapshot.** During bootstrap, an agent
+  runs only `./restore-local-database`, which first requires `seed/uat.sql`. If the snapshot is
+  absent, stop and ask the person to download it from the technicians' handover guide. Never create
+  an empty local database or use `npm run db:migrate:local` as a bootstrap substitute.
 - **Anything an agent creates that is not a deliberate change goes in `.gitignore`.** Generated
   files, local state, logs, markers, temporary files: if it is not a genuine fix to commit, it is
   ignored. Before finishing, `git status --porcelain` prints nothing in this repository and in both
@@ -85,7 +89,10 @@ and do not copy any of them into another** — one copy, one place to update. In
 
 ## Status
 
-`./push`, `./deploy` and `./check-setup` are built (`deploying.md` says how a person runs them; `test/deploy-common.test.sh` tests their helpers and the secondary machine's git hooks in `githooks/`). `./push` has been run end to end against stand-in remotes; `./deploy` has not yet been tried on test or UAT. The server's section of `bootstrap.md` is written: it
-restores the local database from `seed/uat.sql` — a `wrangler d1 export` of UAT that the person downloads
-from the charity's Drive (never committed: `seed/` is ignored) — through the server's
-`npm run db:restore:local`.
+`./push`, `./deploy`, `./check-setup`, `./require-seed` and `./restore-local-database` are built
+(`deploying.md` says how a person runs them; `test/` tests their helpers and the secondary machine's
+git hooks in `githooks/`). `./push` has been run end to end against stand-in remotes; `./deploy` has
+now been prepared and stopped safely on test, but has not completed there or on UAT. Bootstrap
+restores the local database only from `seed/uat.sql` — a `wrangler d1 export` of UAT that the person
+downloads from the charity's Drive (never committed: `seed/` is ignored) — through
+`./restore-local-database`.

@@ -1,0 +1,16 @@
+#!/bin/bash
+# Refuses to continue local setup without the private UAT snapshot. It checks
+# only that the file exists and has content; it never reads or prints it.
+#
+#   ./require-seed
+set -euo pipefail
+
+PROJECT_DIR=$(cd "$(dirname "$0")" && pwd)
+SEED="$PROJECT_DIR/seed/uat.sql"
+
+if [ ! -s "$SEED" ]; then
+    echo "STOPPED: seed/uat.sql is required for local setup. Ask the person to download the UAT export from the technicians' handover guide into seed/uat.sql. Do not create an empty database or run db:migrate:local as a substitute." >&2
+    exit 1
+fi
+
+echo "The required local UAT snapshot is present."

@@ -15,6 +15,14 @@ these rules.
 - If pulling would conflict with local changes, stop and ask the person. Do not resolve it by
   discarding either side.
 
+## Local database snapshot
+
+**Never create an empty local database on this machine.** Its local database is restored only from
+the private UAT export at `../seed/uat.sql`, which a person downloads from the charity's Drive. Run
+`../restore-local-database` to restore it; that command refuses to run without the snapshot. If the
+file is absent, stop and ask the person to download it. Never use `db:migrate:local` as a substitute
+while setting up this machine.
+
 ## Pushing
 
 **"Push" means the project's push command, never `git push`.** The push command:
