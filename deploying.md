@@ -100,21 +100,21 @@ D1-access failures before the migration check runs. If the read-only pending-mig
 the deploy waits ten seconds and tries it once more; it never automatically retries a migration or
 either deployment.
 
-## Daily test D1 probe
+## Hourly test D1 probe
 
-To exercise the same personal-Cloudflare and D1 path overnight without deploying anything, install
-this machine's local probe once:
+To exercise the same personal-Cloudflare and D1 path repeatedly without deploying anything, start
+the local probe from Terminal:
 
 ```bash
-./schedule-test-d1-probe
+./start-hourly-test-d1-probe
 ```
 
-It creates an operating-system scheduled task for **04:17 local time** — `launchd` on macOS and
-Task Scheduler on Windows — not a cron entry. The system task and its local marker are not in git.
-It runs `./probe-test-d1`, which is read-only: it checks the signed-in Wrangler account, sees whether
-`foodbank-test` is listed, and runs the pending-migrations query once. It does not deploy, migrate,
-or retry a failure. Run `./probe-test-d1` yourself at any time for the same check. Its redacted logs
-are under `.deploy/`; `PROBE OK` means every check passed.
+It runs immediately and then once an hour through `nohup`; it ends automatically when the machine
+restarts. Stop it sooner with `./stop-hourly-test-d1-probe`. It runs `./probe-test-d1`, which is
+read-only: it checks the signed-in Wrangler account, sees whether `foodbank-test` is listed, and
+runs the pending-migrations query once. It does not deploy, migrate, or retry a failure. Run
+`./probe-test-d1` yourself at any time for the same check. Its redacted logs are under `.deploy/`;
+`PROBE OK` means every check passed.
 
 ## Deploying now, in an emergency
 

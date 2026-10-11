@@ -1,0 +1,25 @@
+#!/bin/bash
+# Start a local, Terminal-authorised hourly probe. It ends on restart; use
+# ./stop-hourly-test-d1-probe to end it sooner.
+set -euo pipefail
+
+PROJECT_DIR=$(cd "$(dirname "$0")" && pwd)
+STATE_DIR="$PROJECT_DIR/.deploy"
+PID_FILE="$STATE_DIR/test-d1-probe-hourly.pid"
+LOG_FILE="$STATE_DIR/test-d1-probe-hourly.log"
+mkdir -p "$STATE_DIR"
+
+if [ -f "$PID_FILE" ]; then
+    pid=$(tr -d '\r\n' <"$PID_FILE")
+    if kill -0 "$pid" 2>/dev/null; then
+        echo "The hourly test-D1 probe is already running (process $pid)."
+        exit 0
+    fi
+    rm -f "$PID_FILE"
+fi
+
+nohup "$PROJECT_DIR/probe-test-d1-hourly" >>"$LOG_FILE" 2>&1 </dev/null &
+pid=$!
+printf '%s\n' "$pid" >"$PID_FILE"
+echo "Started the hourly test-D1 probe (process $pid). It stops when this machine restarts."
+echo "Use ./stop-hourly-test-d1-probe to stop it sooner; log: $LOG_FILE"

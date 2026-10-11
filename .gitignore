@@ -16,6 +16,3 @@
 
 # Deploy state and logs, per machine.
 /.deploy/
-
-# Local marker for the operating-system test-D1 probe schedule.
-/test-d1-probe.local

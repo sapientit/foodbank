@@ -8,11 +8,9 @@
 # install. A secret is only ever read from a hidden prompt or written to
 # standard output for the calling script; it never appears on a command line.
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('Read', 'Write', 'KeepAwake', 'ScheduleTestD1Probe')][string]$Action,
+    [Parameter(Mandatory = $true)][ValidateSet('Read', 'Write', 'KeepAwake')][string]$Action,
     [string]$Target,
-    [string]$Marker,
-    [string]$ProjectDir,
-    [string]$BashPath
+    [string]$Marker
 )
 $ErrorActionPreference = 'Stop'
 
@@ -84,14 +82,5 @@ switch ($Action) {
         # which the deploy removes when it finishes, however it finishes.
         [void][FoodbankCredential]::SetThreadExecutionState([uint32]'0x80000001')
         while (Test-Path -LiteralPath $Marker) { Start-Sleep -Seconds 30 }
-    }
-    'ScheduleTestD1Probe' {
-        if ([string]::IsNullOrEmpty($ProjectDir) -or [string]::IsNullOrEmpty($BashPath)) {
-            Write-Error 'ProjectDir and BashPath are required'; exit 1
-        }
-        $script = Join-Path $ProjectDir 'probe-test-d1'
-        $action = New-ScheduledTaskAction -Execute $BashPath -Argument ('"' + $script + '"')
-        $trigger = New-ScheduledTaskTrigger -Daily -At 4:17am
-        Register-ScheduledTask -TaskName 'Foodbank Test D1 Probe' -Action $action -Trigger $trigger -Description 'Read-only daily test D1 access probe' -Force | Out-Null
     }
 }
