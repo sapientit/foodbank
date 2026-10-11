@@ -21,27 +21,27 @@ check() {
 EVENING_SUMMER=1791489600     # 2026-10-08 21:00 BST
 EVENING_WINTER=1796158800     # 2026-12-01 21:00 GMT
 AFTER_MIDNIGHT=1791505800     # 2026-10-09 01:30 BST
-EXACTLY_0417=1791515820       # 2026-10-09 04:17 BST
+EXACTLY_0447=1791517620       # 2026-10-09 04:47 BST
 CLOCKS_GO_BACK=1792875600     # 2026-10-24 22:00 BST; clocks go back that night
 CLOCKS_GO_FORWARD=1774735200  # 2026-03-28 22:00 GMT; clocks go forward that night
 london() { node lib/london-time.mjs stamp "$1"; }
 
 # --- when tonight's deploy runs -------------------------------------------
-check "evening in summer: next morning at 04:17 BST" \
-    "2026-10-09 04:17 BST" "$(london "$(next_overnight_epoch "$EVENING_SUMMER")")"
-check "evening in winter: next morning at 04:17 GMT" \
-    "2026-12-02 04:17 GMT" "$(london "$(next_overnight_epoch "$EVENING_WINTER")")"
+check "evening in summer: next morning at 04:47 BST" \
+    "2026-10-09 04:47 BST" "$(london "$(next_overnight_epoch "$EVENING_SUMMER")")"
+check "evening in winter: next morning at 04:47 GMT" \
+    "2026-12-02 04:47 GMT" "$(london "$(next_overnight_epoch "$EVENING_WINTER")")"
 check "prepared after midnight: the same morning" \
-    "2026-10-09 04:17 BST" "$(london "$(next_overnight_epoch "$AFTER_MIDNIGHT")")"
-check "prepared exactly at 04:17: the next morning, not now" \
-    "2026-10-10 04:17 BST" "$(london "$(next_overnight_epoch "$EXACTLY_0417")")"
-check "the night the clocks go back: still 04:17 London time" \
-    "2026-10-25 04:17 GMT" "$(london "$(next_overnight_epoch "$CLOCKS_GO_BACK")")"
-check "the night the clocks go forward: still 04:17 London time" \
-    "2026-03-29 04:17 BST" "$(london "$(next_overnight_epoch "$CLOCKS_GO_FORWARD")")"
+    "2026-10-09 04:47 BST" "$(london "$(next_overnight_epoch "$AFTER_MIDNIGHT")")"
+check "prepared exactly at 04:47: the next morning, not now" \
+    "2026-10-10 04:47 BST" "$(london "$(next_overnight_epoch "$EXACTLY_0447")")"
+check "the night the clocks go back: still 04:47 London time" \
+    "2026-10-25 04:47 GMT" "$(london "$(next_overnight_epoch "$CLOCKS_GO_BACK")")"
+check "the night the clocks go forward: still 04:47 London time" \
+    "2026-03-29 04:47 BST" "$(london "$(next_overnight_epoch "$CLOCKS_GO_FORWARD")")"
 check "the approval message names the day and zone" \
-    "Fri 09 Oct 04:17 BST" "$(london_time "$(next_overnight_epoch "$EVENING_SUMMER")")"
-check "the overnight window runs 04:17 to 07:00" "9780" "$OVERNIGHT_WINDOW_SECONDS"
+    "Fri 09 Oct 04:47 BST" "$(london_time "$(next_overnight_epoch "$EVENING_SUMMER")")"
+check "the overnight window runs 04:47 to 07:00" "7980" "$OVERNIGHT_WINDOW_SECONDS"
 
 # --- the tested-pair record -----------------------------------------------
 tmp=$(mktemp -d)
@@ -79,6 +79,19 @@ check "notifications: UAT sends email" "0" "$?"
 check "diagnostics: account id excludes signed-in email" "ea7ad751ffa489bc577330c6eedd7500" \
     "$(printf "👋 You are logged in with an OAuth Token, associated with the email person@example.org.\n│ Personal Account │ ea7ad751ffa489bc577330c6eedd7500 │\n" | wrangler_account_id)"
 unset DEPLOY_TEST_SECRET
+
+# --- a safe transient-failure retry -----------------------------------------
+sleep() { :; }
+attempts=0
+flaky_read_only_check() { attempts=$((attempts + 1)); [ "$attempts" -eq 2 ]; }
+retry_read_only_check "the test read-only check" flaky_read_only_check 2>/dev/null
+check "retry: a read-only check gets one second attempt" "2" "$attempts"
+always_fails=0
+permanently_failing_read_only_check() { always_fails=$((always_fails + 1)); return 1; }
+retry_read_only_check "the test read-only check" permanently_failing_read_only_check 2>/dev/null
+check "retry: a second failure is returned" "1" "$?"
+check "retry: no third attempt is made" "2" "$always_fails"
+unset -f sleep
 check "diagnostics: unset variable reveals no value" "unset" "$(environment_variable_state DEPLOY_TEST_SECRET)"
 DEPLOY_TEST_SECRET=not-logged
 check "diagnostics: set variable reveals no value" "set" "$(environment_variable_state DEPLOY_TEST_SECRET)"
@@ -172,7 +185,7 @@ check "hooks: a plain git push is refused" "1" "$?"
 check "hooks: ...and nothing reached the remote" "" "$(git -C "$tmp/remote.git" for-each-ref)"
 FOODBANK_PROJECT_PUSH=1 git -C "$proj/app" push -q origin HEAD 2>/dev/null
 check "hooks: the push command's push goes through" "0" "$?"
-echo "uat: waiting to deploy at Fri 09 Oct 04:17 BST (process 1)" >"$proj/status.txt"
+echo "uat: waiting to deploy at Fri 09 Oct 04:47 BST (process 1)" >"$proj/status.txt"
 app_commit second
 check "hooks: a commit while a deploy waits is refused" "1" "$?"
 echo "uat: was waiting, but its process is gone — it will not run. Prepare again." >"$proj/status.txt"

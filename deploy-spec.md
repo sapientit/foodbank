@@ -69,7 +69,7 @@ Run by a person, in the evening for an overnight deploy. The command:
    the Cloudflare token works against the charity's account, the database's Time Travel bookmark can
    be read, and for UAT a test email sent through Resend arrives. Test skips the email check.
 6. **Asks the person to choose and approve:**
-   - **Overnight (the default)** — schedules the deploy itself for **04:17 London time** that
+   - **Overnight (the default)** — schedules the deploy itself for **04:47 London time** that
      night. Nothing on the live system changes until then. That is clear of the server's own nightly
      job in every season (it runs at 02:17 UTC: 02:17 London time in winter, 03:17 in summer) and
      leaves time before 07:00. Starting at the same time as that job would do no great harm; the
@@ -89,6 +89,8 @@ left on, awake and online until it has finished.
 2. **If there are migrations to apply, records a restore point.** It takes the database's current
    Time Travel bookmark and saves it with the deploy record. If the bookmark cannot be taken, it
    stops before migrating. With no migrations pending, this step is skipped.
+   The read-only check for pending migrations retries once after ten seconds if Cloudflare rejects
+   it; migrations themselves are never retried automatically.
 3. **Applies the server's database migrations, deploys the server, then deploys the client**, from
    the files built during preparation.
 4. **Verifies the result**: the deployed commits are the approved ones, the server reports healthy,

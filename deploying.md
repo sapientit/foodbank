@@ -73,7 +73,7 @@ It checks everything and builds, then stops for you at these points:
 - **"Type overnight, now, or anything else to stop"** — press Enter for **overnight**, the normal
   choice. Type **now** only in an emergency (below).
 
-**Overnight**, it says when it will deploy (04:17 London time) and returns. Until then:
+**Overnight**, it says when it will deploy (04:47 London time) and returns. Until then:
 
 - **Leave the computer on mains power, awake and logged in, with the lid open.** The deploy keeps it
   from going to sleep by itself, but closing a laptop's lid, or a power cut, still sends it to sleep.
@@ -96,7 +96,9 @@ For **test**, there is deliberately no email: read the terminal result and the l
 At the start of an unattended test deployment, the log records the selected Cloudflare account ID,
 whether Cloudflare credential variables were set, and whether D1 lists `foodbank-test`. It never
 records a token or the signed-in email. Those lines distinguish the account, credential-source and
-D1-access failures before the migration check runs.
+D1-access failures before the migration check runs. If the read-only pending-migrations check fails,
+the deploy waits ten seconds and tries it once more; it never automatically retries a migration or
+either deployment.
 
 ## Deploying now, in an emergency
 

@@ -185,6 +185,10 @@ list_pending_migrations() {
     printf '%s\n' "$output" | pending_migrations
 }
 
+list_pending_migrations_with_retry() {
+    retry_read_only_check "the pending-migrations check" list_pending_migrations
+}
+
 read_bookmark() {
     server_wrangler d1 time-travel info "$DATABASE" "${SERVER_WRANGLER_ENV[@]}" --json 2>/dev/null | json_field bookmark
 }
@@ -449,7 +453,7 @@ run_deploy() {
     use_bash_for_npm_scripts
 
     # Awake from now until this run ends, waiting included: a computer asleep
-    # at 04:17 runs nothing.
+    # at 04:47 runs nothing.
     local awake="$STATE_DIR/$TARGET.awake" lock="$STATE_DIR/$TARGET.lock"
     install_deploy_cleanup_trap "$awake" "$lock"
     keep_awake_while_running "$$" "$awake"
@@ -490,7 +494,7 @@ run_deploy() {
     STEP="2. recording a restore point"
     heading "$STEP"
     local migrations
-    migrations=$(list_pending_migrations) || fail "could not list the pending migrations. Nothing was deployed."
+    migrations=$(list_pending_migrations_with_retry) || fail "could not list the pending migrations after retrying once. Nothing was deployed."
     if [ -n "$migrations" ]; then
         BOOKMARK=$(read_bookmark) || fail "the Time Travel bookmark could not be taken. Nothing was migrated or deployed."
         write_setting "$STATE" BOOKMARK "$BOOKMARK"

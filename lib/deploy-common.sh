@@ -7,10 +7,10 @@
 
 # Overnight deploys start at this London time: clear of the server's 02:17 UTC
 # nightly job in both seasons (02:17 or 03:17 London) and before 07:00.
-OVERNIGHT_LONDON_TIME=04:17
-# From 04:17 to 07:00. An overnight deploy that has not started by then does
+OVERNIGHT_LONDON_TIME=04:47
+# From 04:47 to 07:00. An overnight deploy that has not started by then does
 # not start at all.
-OVERNIGHT_WINDOW_SECONDS=$(( (7 * 60 - (4 * 60 + 17)) * 60 ))
+OVERNIGHT_WINDOW_SECONDS=$(( (7 * 60 - (4 * 60 + 47)) * 60 ))
 
 die() {
     echo "STOPPED: $*" >&2
@@ -79,6 +79,18 @@ install_deploy_cleanup_trap() {
     printf -v awake_quoted '%q' "$awake"
     printf -v lock_quoted '%q' "$lock"
     trap "rm -f -- $awake_quoted; rmdir -- $lock_quoted 2>/dev/null || true" EXIT
+}
+
+# A read-only check may be retried once.  Do not use this for any state-changing
+# operation such as a migration or a deploy.
+retry_read_only_check() {
+    local description=$1 status
+    shift
+    "$@" && return 0
+    status=$?
+    printf '   %s failed (exit %s); retrying once in 10 seconds.\n' "$description" "$status" >&2
+    sleep 10
+    "$@"
 }
 
 # The bookmark from `wrangler d1 time-travel info --json`, or nothing.

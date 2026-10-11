@@ -44,7 +44,7 @@ and do not copy any of them into another** — one copy, one place to update. In
   pass, and records the tested pair in a gitignored local file. It never pushes this repository: a fix to
   these commands — debugging them on Windows on the secondary machine, say — is pushed separately.
 - **Deploy** has a preparation part, with someone online — every check, the build, then an approval —
-  and by default deploys unattended overnight on the same machine, at 04:17 London time, and
+  and by default deploys unattended overnight on the same machine, at 04:47 London time, and
   emails the result through Resend. A failure waits for a person at 07:00.
 - **In an emergency the person can deploy now** instead of overnight, after an extra confirmation.
 - A release with migrations records a D1 Time Travel bookmark first, and stops if it cannot.
