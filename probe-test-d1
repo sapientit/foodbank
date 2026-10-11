@@ -1,0 +1,80 @@
+#!/bin/bash
+# Read-only 04:17 test-account D1 probe.  Safe to run by hand or by the local
+# scheduler; it never deploys, migrates, writes D1, or reads a credential.
+set -uo pipefail
+
+PROJECT_DIR=$(cd "$(dirname "$0")" && pwd)
+SERVER_DIR="$PROJECT_DIR/foodbankserver"
+STATE_DIR="$PROJECT_DIR/.deploy"
+EXPECTED_ACCOUNT_ID=ea7ad751ffa489bc577330c6eedd7500
+
+# shellcheck source=lib/deploy-common.sh
+. "$PROJECT_DIR/lib/deploy-common.sh"
+
+[ -d "$SERVER_DIR" ] || die "foodbankserver is not set up."
+mkdir -p "$STATE_DIR"
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+log="$STATE_DIR/test-d1-probe-$stamp.log"
+# Keep the manual command visible while appending the same safe output to its
+# local log. Unlike the deploy's process substitution, this also works in a
+# restricted shell used for the standalone probe test.
+say() { printf '%s\n' "$*" | tee -a "$log"; }
+
+say "Test D1 probe at $(london_time "$(date +%s)")"
+say "Log: $log"
+unset CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID
+say "Cloudflare variables: CLOUDFLARE_API_TOKEN $(environment_variable_state CLOUDFLARE_API_TOKEN); CLOUDFLARE_ACCOUNT_ID $(environment_variable_state CLOUDFLARE_ACCOUNT_ID)"
+
+server_wrangler() { (cd "$SERVER_DIR" && npx wrangler "$@"); }
+failed=0
+
+status=0
+output=$(server_wrangler whoami 2>&1) || status=$?
+if [ "$status" -eq 0 ]; then
+    account=$(printf '%s\n' "$output" | wrangler_account_id)
+    if [ "$account" = "$EXPECTED_ACCOUNT_ID" ]; then
+        say "Wrangler account: $account (expected test account)"
+    elif [ -n "$account" ]; then
+        say "Wrangler account: $account (expected $EXPECTED_ACCOUNT_ID)"
+        failed=1
+    else
+        say "Wrangler did not report an account id"
+        failed=1
+    fi
+else
+    say "Wrangler identity check failed (exit $status); output is withheld because it can name the signed-in account"
+    failed=1
+fi
+
+status=0
+output=$(server_wrangler d1 list --json 2>&1) || status=$?
+if [ "$status" -eq 0 ] && printf '%s' "$output" | grep -q 'foodbank-test'; then
+    say "D1 catalogue: foodbank-test is visible"
+elif [ "$status" -eq 0 ]; then
+    say "D1 catalogue: query succeeded but foodbank-test was not listed"
+    failed=1
+else
+    say "D1 catalogue query failed (exit $status); response is withheld"
+    failed=1
+fi
+
+status=0
+output=$(server_wrangler d1 migrations list foodbank-test --remote --env "" 2>&1) || status=$?
+if [ "$status" -eq 0 ]; then
+    migrations=$(printf '%s\n' "$output" | pending_migrations)
+    if [ -n "$migrations" ]; then
+        say "Pending migrations: $(printf '%s' "$migrations" | tr '\n' ' ')"
+    else
+        say "Pending-migrations check: no migrations to apply"
+    fi
+else
+    say "Pending-migrations check failed (exit $status); response is withheld"
+    failed=1
+fi
+
+if [ "$failed" -eq 0 ]; then
+    say "PROBE OK"
+else
+    say "PROBE FAILED"
+fi
+exit "$failed"

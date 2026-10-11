@@ -80,3 +80,29 @@ use_bash_for_npm_scripts() {
         export npm_config_script_shell="$bash_exe"
     fi
 }
+
+# Register a local daily operating-system task, rather than a repository cron
+# file. The task only runs the read-only test D1 probe.
+schedule_test_d1_probe() {
+    local project_dir=$1
+    case "$(platform)" in
+        mac)
+            local user_dir label agent uid
+            label=org.guildfordfoodbank.test-d1-probe
+            user_dir=$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | awk '{print $2}')
+            agent="$user_dir/Library/LaunchAgents/$label.plist"
+            uid=$(id -u)
+            node -e '
+const fs = require("fs");
+const [file, project] = process.argv.slice(1);
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+fs.writeFileSync(file, `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>org.guildfordfoodbank.test-d1-probe</string><key>ProgramArguments</key><array><string>/bin/bash</string><string>${esc(project)}/probe-test-d1</string></array><key>StartCalendarInterval</key><dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>17</integer></dict><key>StandardOutPath</key><string>${esc(project)}/.deploy/test-d1-probe-launchd.log</string><key>StandardErrorPath</key><string>${esc(project)}/.deploy/test-d1-probe-launchd.log</string></dict></plist>\n`);
+' "$agent" "$project_dir"
+            launchctl bootout "gui/$uid" "$agent" >/dev/null 2>&1 || true
+            launchctl bootstrap "gui/$uid" "$agent"
+            ;;
+        windows)
+            _windows_ps -Action ScheduleTestD1Probe -ProjectDir "$(cygpath -w "$project_dir")" -BashPath "$(cygpath -w "$(command -v bash)")"
+            ;;
+    esac
+}
