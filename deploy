@@ -451,7 +451,7 @@ run_deploy() {
     # Awake from now until this run ends, waiting included: a computer asleep
     # at 04:17 runs nothing.
     local awake="$STATE_DIR/$TARGET.awake" lock="$STATE_DIR/$TARGET.lock"
-    trap 'rm -f "$awake"; rmdir "$lock" 2>/dev/null || true' EXIT
+    install_deploy_cleanup_trap "$awake" "$lock"
     keep_awake_while_running "$$" "$awake"
 
     if [ "$MODE" = overnight ]; then

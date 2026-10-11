@@ -84,6 +84,24 @@ DEPLOY_TEST_SECRET=not-logged
 check "diagnostics: set variable reveals no value" "set" "$(environment_variable_state DEPLOY_TEST_SECRET)"
 unset DEPLOY_TEST_SECRET
 
+# --- deploy cleanup ----------------------------------------------------------
+# The cleanup trap must not expand run_deploy's local variables after that
+# function has returned (which would fail under `set -u`).
+cleanup_marker="$tmp/awake marker"
+cleanup_lock="$tmp/deploy lock"
+mkdir "$cleanup_lock"
+: >"$cleanup_marker"
+(
+    set -u
+    simulate_run_deploy_scope() {
+        local awake=$1 lock=$2
+        install_deploy_cleanup_trap "$awake" "$lock"
+    }
+    simulate_run_deploy_scope "$cleanup_marker" "$cleanup_lock"
+)
+check "cleanup: marker is removed after caller locals expire" "0" "$(test ! -e "$cleanup_marker"; echo $?)"
+check "cleanup: lock is removed after caller locals expire" "0" "$(test ! -e "$cleanup_lock"; echo $?)"
+
 # --- JSON -------------------------------------------------------------------
 check "json: bookmark read" "00000085-0000024c" "$(printf '{"bookmark":"00000085-0000024c","timestamp":"x"}' | json_field bookmark)"
 check "json: version read" "abc1234" "$(printf '{"status":"ok","version":"abc1234"}' | json_field version)"

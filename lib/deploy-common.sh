@@ -71,6 +71,16 @@ environment_variable_state() {
     esac
 }
 
+# Install an EXIT trap for a running deploy.  The paths are quoted while the
+# caller's local variables still exist: an EXIT trap runs after run_deploy has
+# returned, when expanding those variables under `set -u` would fail.
+install_deploy_cleanup_trap() {
+    local awake=$1 lock=$2 awake_quoted lock_quoted
+    printf -v awake_quoted '%q' "$awake"
+    printf -v lock_quoted '%q' "$lock"
+    trap "rm -f -- $awake_quoted; rmdir -- $lock_quoted 2>/dev/null || true" EXIT
+}
+
 # The bookmark from `wrangler d1 time-travel info --json`, or nothing.
 json_field() {
     node -e '
