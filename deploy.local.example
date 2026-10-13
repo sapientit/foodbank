@@ -7,6 +7,6 @@
 #
 # The address the result emails come from: a role address, not a person's.
 # Its domain must be verified in Resend.
-RESEND_FROM=Food bank releases <releases@guildfordfoodbank.org>
+RESEND_FROM=Food bank releases <noreply@scripts.guildfordfoodbank.org>
 # Who is told the result: one address, or several separated by commas.
 RESEND_TO=
